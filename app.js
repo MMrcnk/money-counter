@@ -95,15 +95,27 @@ const el = {
 };
 
 /* ---------- układ zależny od ekranu ---------- */
+// bezpieczne marginesy ekranu (notch / pasek na dole) odczytane z CSS
+const safeProbe = document.createElement('div');
+safeProbe.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)';
+document.body.appendChild(safeProbe);
+function safe() {
+  const cs = getComputedStyle(safeProbe);
+  return { top: parseFloat(cs.paddingTop) || 0, bottom: parseFloat(cs.paddingBottom) || 0 };
+}
+// Pozycje liczone z wymiarów ekranu, a nie z położenia elementów –
+// dzięki temu klawiatura iOS (która przesuwa widok) nie psuje układu.
 function layout() {
-  L.W = window.innerWidth; L.H = el.app.clientHeight || window.innerHeight;
-  const st = el.gear.getBoundingClientRect().top - 18;
-  const pillR = el.pill.getBoundingClientRect();
-  const rndR = el.addIn.getBoundingClientRect();
+  L.W = el.app.clientWidth || window.innerWidth;
+  L.H = el.app.clientHeight || window.innerHeight;
+  const sa = safe();
+  const nb = Math.max(sa.bottom - 14, 18);
+  const pillBottom = sa.top + 76 + (el.pill.offsetHeight || 46);
+  const rndTop = L.H - nb - 170 - 86;
   L.fs = baseFont();
   const h = L.fs * 1.08;
-  L.homeY = Math.round((pillR.bottom + rndR.top) / 2 - h / 2);
-  L.topY = Math.round(st + 22);
+  L.homeY = Math.round((pillBottom + rndTop) / 2 - h / 2);
+  L.topY = Math.round(sa.top + 22);
   el.rain.style.setProperty('--fallH', (L.H + 140) + 'px');
   placeAll();
 }
@@ -424,6 +436,7 @@ function closeModal(after) {
   if (!modal || modal.closing) return;
   const m = modal; m.closing = true;
   if (document.activeElement) document.activeElement.blur();
+  window.scrollTo(0, 0);
   m.ov.classList.add('closing'); m.card.classList.add('closing');
   setTimeout(() => { m.ov.remove(); if (modal === m) modal = null; if (typeof after === 'function') after(); }, 220);
 }
@@ -436,6 +449,7 @@ function wheelHTML() {
 }
 function mountWheel(root, initial, onChange) {
   const sc = $('.wscroll', root); let cur = initial;
+  sc.addEventListener('scroll', () => { if (sc.scrollLeft) sc.scrollLeft = 0; }, { passive: true });
   const mark = () => sc.querySelectorAll('.witem').forEach((b) => b.classList.toggle('sel', Number(b.dataset.n) === cur));
   mark();
   requestAnimationFrame(() => { sc.scrollTop = (initial - 1) * 44; });
@@ -463,15 +477,20 @@ function audio() {
   } catch (e) { AC = null; }
   return AC;
 }
-// dźwięk kasy z pliku kasa.mp3 – wczytany raz, odtwarzany przez Web Audio (niezawodnie na iOS)
-let kasaBuf = null, kasaRaw = null;
-fetch('kasa.mp3').then((r) => r.arrayBuffer()).then((b) => { kasaRaw = b; }).catch(() => {});
-function decodeKasa(ctx) {
-  if (kasaBuf || !kasaRaw) return Promise.resolve(kasaBuf);
-  const raw = kasaRaw; kasaRaw = null;
-  return new Promise((res) => ctx.decodeAudioData(raw, (b) => { kasaBuf = b; res(b); }, () => res(null)));
+// dźwięki z plików – wczytane raz, odtwarzane przez Web Audio (niezawodnie na iOS)
+// kasa.mp3 – po dodaniu przychodu, wydatek.mp3 – po dodaniu wydatku
+const SOUNDS = {};
+['kasa.mp3', 'wydatek.mp3'].forEach((f) => {
+  SOUNDS[f] = { raw: null, buf: null };
+  fetch(f).then((r) => r.arrayBuffer()).then((b) => { SOUNDS[f].raw = b; }).catch(() => {});
+});
+function decodeSound(ctx, f) {
+  const s = SOUNDS[f];
+  if (s.buf || !s.raw) return Promise.resolve(s.buf);
+  const raw = s.raw; s.raw = null;
+  return new Promise((res) => ctx.decodeAudioData(raw, (b) => { s.buf = b; res(b); }, () => res(null)));
 }
-function chaChing() {
+function playSound(f) {
   const ctx = audio();
   const play = (buf) => {
     if (buf && ctx) {
@@ -479,10 +498,10 @@ function chaChing() {
       const g = ctx.createGain(); g.gain.value = 0.9;
       src.connect(g); g.connect(ctx.destination); src.start();
     } else {
-      try { const a = new Audio('kasa.mp3'); a.play().catch(() => {}); } catch (e) {}
+      try { const a = new Audio(f); a.play().catch(() => {}); } catch (e) {}
     }
   };
-  if (ctx) decodeKasa(ctx).then(play); else play(null);
+  if (ctx) decodeSound(ctx, f).then(play); else play(null);
 }
 
 /* --- dodawanie przychodu / wydatku --- */
@@ -503,7 +522,7 @@ function openAdd(type) {
     if (file) { $('#fAttLbl', card).textContent = file.name; att.classList.add('has'); }
   });
   $('#fGo', card).addEventListener('click', async () => {
-    if (isIn) audio(); // odblokowanie dźwięku w iOS – musi być w momencie stuknięcia
+    audio(); // odblokowanie dźwięku w iOS – musi być w momencie stuknięcia
     const name = $('#fName', card).value.trim(), a = num($('#fAmt', card).value);
     $('#fName', card).classList.toggle('bad', !name);
     $('#fAmt', card).classList.toggle('bad', !(a > 0));
@@ -514,7 +533,7 @@ function openAdd(type) {
       try { await idb.set(e.id, file); } catch (err) { delete e.att; }
     }
     S.entries.push(e); save();
-    if (isIn) chaChing();
+    playSound(isIn ? 'kasa.mp3' : 'wydatek.mp3');
     renderAll();
     closeModal();
   });
@@ -721,6 +740,7 @@ function openOnboarding() {
 
 /* ---------- start ---------- */
 window.addEventListener('resize', layoutSoon);
+document.addEventListener('focusout', () => setTimeout(() => window.scrollTo(0, 0), 50));
 window.addEventListener('orientationchange', layoutSoon);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { renderPill(); renderFixed(); } });
 
