@@ -117,7 +117,12 @@ function layout() {
   L.homeY = Math.round((pillBottom + rndTop) / 2 - h / 2);
   L.topY = Math.round(sa.top + 22);
   el.rain.style.setProperty('--fallH', (L.H + 140) + 'px');
+  // zmiana rozmiaru ekranu (np. przy starcie aplikacji) nie może niczego animować
+  el.app.classList.add('booting');
   placeAll();
+  void el.app.offsetWidth;
+  clearTimeout(layout.t);
+  layout.t = setTimeout(() => el.app.classList.remove('booting'), 60);
 }
 function baseFont() {
   const len = fmt(balance()).length;
@@ -185,7 +190,8 @@ function placeAll() {
   const pos = ui.idx - ui.drag / L.W;
   const t = Math.min(1, Math.abs(pos - 1));
   [el.track, el.glass, el.uline].forEach((x) => x.classList.toggle('dragging', ui.dragging));
-  el.track.style.transform = 'translateX(' + (-ui.idx * L.W + ui.drag) + 'px)';
+  // pozycja w % (niezależna od szerokości ekranu) + przesunięcie palca w px
+  el.track.style.transform = 'translateX(calc(' + (-ui.idx * 100 / 3).toFixed(4) + '% + ' + ui.drag.toFixed(2) + 'px))';
   el.glass.style.opacity = t.toFixed(3);
   [...el.nav.querySelectorAll('button')].forEach((b) => b.classList.toggle('on', Number(b.dataset.i) === ui.idx));
   const nw = el.nav.clientWidth;
@@ -793,7 +799,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { re
 el.app.classList.add('booting');
 renderPill(); renderHistory(); renderFixed(); renderRain();
 layout();
-setTimeout(() => el.app.classList.remove('booting'), 400);
+
 renderBalance('intro');
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(layoutSoon);
 if (!S.onboarded) openOnboarding();
