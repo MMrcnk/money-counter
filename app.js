@@ -96,14 +96,14 @@ const el = {
 
 /* ---------- układ zależny od ekranu ---------- */
 function layout() {
-  L.W = window.innerWidth; L.H = window.innerHeight;
-  const st = el.gear.getBoundingClientRect().top - 8;
+  L.W = window.innerWidth; L.H = el.app.clientHeight || window.innerHeight;
+  const st = el.gear.getBoundingClientRect().top - 18;
   const pillR = el.pill.getBoundingClientRect();
   const rndR = el.addIn.getBoundingClientRect();
   L.fs = baseFont();
   const h = L.fs * 1.08;
   L.homeY = Math.round((pillR.bottom + rndR.top) / 2 - h / 2);
-  L.topY = Math.round(st + 14);
+  L.topY = Math.round(st + 22);
   el.rain.style.setProperty('--fallH', (L.H + 140) + 'px');
   placeAll();
 }
@@ -186,7 +186,7 @@ function placeBal() {
   const baseY = home ? L.homeY : L.topY;
   const sc = home ? 1 : 0.5;
   let y = baseY, o = 1;
-  if (ui.dragging) {
+  if (ui.dragging && !isOverscroll()) {
     const off = Math.min(1, Math.abs(ui.drag) / L.W * 3);
     y = baseY - 22 * off; o = 1 - off;
   } else if (ui.balPhase === 'out') { y = baseY - 22; o = 0; }
@@ -214,6 +214,7 @@ function goTo(i) {
 let P = null, raf = 0;
 el.app.addEventListener('pointerdown', (e) => {
   if (document.querySelector('.ov')) return;
+  stopJelly();
   P = { x: e.clientX, y: e.clientY, axis: null };
 });
 el.app.addEventListener('pointermove', (e) => {
@@ -226,15 +227,61 @@ el.app.addEventListener('pointermove', (e) => {
   if (P.axis === 'x') {
     ui.moved = true;
     let d = dx;
-    if ((ui.idx === 0 && d > 0) || (ui.idx === 2 && d < 0)) d *= 0.3;
+    if ((ui.idx === 0 && d > 0) || (ui.idx === 2 && d < 0)) d = rubber(d);
     ui.drag = d; ui.dragging = true;
     if (!raf) raf = requestAnimationFrame(() => { raf = 0; placeAll(); });
   }
 });
+// opór na krawędziach jak w iOS – im dalej ciągniesz, tym mocniej „trzyma”
+function rubber(x) {
+  const dim = L.W, c = 0.55, a = Math.abs(x);
+  return Math.sign(x) * (1 - 1 / (a * c / dim + 1)) * dim;
+}
+const isOverscroll = () => (ui.idx === 0 && ui.drag > 0) || (ui.idx === 2 && ui.drag < 0);
+// „żelek” – po puszczeniu krawędź odbija się jak sprężyna z lekkim drganiem
+let jellyRaf = 0, jellyPanel = null;
+function stopJelly() {
+  if (!jellyRaf) return;
+  cancelAnimationFrame(jellyRaf); jellyRaf = 0;
+  if (jellyPanel) jellyPanel.style.transform = '';
+  el.track.classList.remove('dragging');
+}
+function jelly(fromX) {
+  stopJelly();
+  const panel = jellyPanel = el.track.children[ui.idx];
+  const base = -ui.idx * L.W;
+  const k = 260, c = 13;           // sztywność i tłumienie sprężyny
+  let x = fromX, v = 0, last = performance.now();
+  el.track.classList.add('dragging');
+  const step = (t) => {
+    const dt = Math.min(0.032, (t - last) / 1000); last = t;
+    v += (-k * x - c * v) * dt; x += v * dt;
+    el.track.style.transform = 'translateX(' + (base + x) + 'px)';
+    const sk = Math.max(-3, Math.min(3, v * 0.0035));
+    const sc = 1 + Math.min(0.025, Math.abs(x) / L.W * 0.12);
+    panel.style.transform = 'skewX(' + (-sk).toFixed(3) + 'deg) scaleX(' + sc.toFixed(4) + ')';
+    if (Math.abs(x) < 0.3 && Math.abs(v) < 4) {
+      jellyRaf = 0; panel.style.transform = '';
+      el.track.style.transform = 'translateX(' + base + 'px)';
+      el.track.classList.remove('dragging');
+      return;
+    }
+    jellyRaf = requestAnimationFrame(step);
+  };
+  jellyRaf = requestAnimationFrame(step);
+}
 function endDrag() {
   if (!P) return;
   const axis = P.axis; P = null;
   if (axis === 'x') {
+    if (isOverscroll()) {
+      const from = ui.drag;
+      ui.drag = 0; ui.dragging = false; ui.balPhase = 'in';
+      placeAll();
+      jelly(from);
+      setTimeout(() => { ui.moved = false; }, 60);
+      return;
+    }
     let i = ui.idx;
     if (ui.drag < -70) i = Math.min(2, i + 1);
     if (ui.drag > 70) i = Math.max(0, i - 1);
@@ -363,6 +410,8 @@ function openModal(html, opts = {}) {
   card.innerHTML = '<div class="swap">' + html + '</div>';
   ov.appendChild(card); document.body.appendChild(ov);
   if (!opts.locked) ov.addEventListener('click', (e) => { if (e.target === ov) closeModal(opts.onClose); });
+  // stuknięcie w pustą część karty chowa klawiaturę
+  card.addEventListener('click', (e) => { if (!e.target.closest('input,button,label,.wheel') && document.activeElement && document.activeElement.blur) document.activeElement.blur(); });
   modal = { ov, card, closing: false };
   return card;
 }
@@ -401,6 +450,41 @@ function mountWheel(root, initial, onChange) {
 
 const CLIP = '<svg width="34" height="34" viewBox="0 0 34 34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M23 12.5l-9.6 9.6a3 3 0 0 1-4.2-4.2l10.4-10.4a5 5 0 0 1 7 7L15.4 25.7a7 7 0 0 1-9.9-9.9L15 6.3"/></svg>';
 
+
+/* ---------- dźwięk „cza-czing” kasy (generowany, bez plików) ---------- */
+let AC = null;
+function audio() {
+  try {
+    if (!AC) {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      if (navigator.audioSession) { try { navigator.audioSession.type = 'transient'; } catch (e) {} }
+    }
+    if (AC.state === 'suspended') AC.resume();
+  } catch (e) { AC = null; }
+  return AC;
+}
+// dźwięk kasy z pliku kasa.mp3 – wczytany raz, odtwarzany przez Web Audio (niezawodnie na iOS)
+let kasaBuf = null, kasaRaw = null;
+fetch('kasa.mp3').then((r) => r.arrayBuffer()).then((b) => { kasaRaw = b; }).catch(() => {});
+function decodeKasa(ctx) {
+  if (kasaBuf || !kasaRaw) return Promise.resolve(kasaBuf);
+  const raw = kasaRaw; kasaRaw = null;
+  return new Promise((res) => ctx.decodeAudioData(raw, (b) => { kasaBuf = b; res(b); }, () => res(null)));
+}
+function chaChing() {
+  const ctx = audio();
+  const play = (buf) => {
+    if (buf && ctx) {
+      const src = ctx.createBufferSource(); src.buffer = buf;
+      const g = ctx.createGain(); g.gain.value = 0.9;
+      src.connect(g); g.connect(ctx.destination); src.start();
+    } else {
+      try { const a = new Audio('kasa.mp3'); a.play().catch(() => {}); } catch (e) {}
+    }
+  };
+  if (ctx) decodeKasa(ctx).then(play); else play(null);
+}
+
 /* --- dodawanie przychodu / wydatku --- */
 function openAdd(type) {
   const isIn = type === 'in';
@@ -419,6 +503,7 @@ function openAdd(type) {
     if (file) { $('#fAttLbl', card).textContent = file.name; att.classList.add('has'); }
   });
   $('#fGo', card).addEventListener('click', async () => {
+    if (isIn) audio(); // odblokowanie dźwięku w iOS – musi być w momencie stuknięcia
     const name = $('#fName', card).value.trim(), a = num($('#fAmt', card).value);
     $('#fName', card).classList.toggle('bad', !name);
     $('#fAmt', card).classList.toggle('bad', !(a > 0));
@@ -429,6 +514,7 @@ function openAdd(type) {
       try { await idb.set(e.id, file); } catch (err) { delete e.att; }
     }
     S.entries.push(e); save();
+    if (isIn) chaChing();
     renderAll();
     closeModal();
   });
