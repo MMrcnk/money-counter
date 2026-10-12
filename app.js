@@ -654,13 +654,8 @@ function openSettings() {
       '<div class="ct">ustawienia</div>' +
       '<div class="sline"><span>budżet startowy</span><b>' + fmt(S.start) + ' zł</b></div>' +
       '<div class="sline"><span>wpisy w historii</span><b>' + S.entries.length + '</b></div>' +
-      '<div class="links"><button id="sExp">eksportuj kopię</button><label><button id="sImp" type="button">importuj kopię</button></label></div>' +
-      '<input type="file" id="sImpFile" accept="application/json,.json" style="display:none">' +
       '<button class="btn out" id="sReset" style="margin-top:4px">resetuj budżet</button>'
     );
-    $('#sExp', card).addEventListener('click', exportData);
-    $('#sImp', card).addEventListener('click', () => $('#sImpFile', card).click());
-    $('#sImpFile', card).addEventListener('change', (ev) => { const file = ev.target.files && ev.target.files[0]; if (file) confirmImport(file); });
     $('#sReset', card).addEventListener('click', confirmReset);
   };
   const confirmReset = () => {
