@@ -184,7 +184,7 @@ let layoutT; function layoutSoon() { clearTimeout(layoutT); layoutT = setTimeout
 function placeAll() {
   const pos = ui.idx - ui.drag / L.W;
   const t = Math.min(1, Math.abs(pos - 1));
-  [el.track, el.glass, el.uline, el.bal].forEach((x) => x.classList.toggle('dragging', ui.dragging));
+  [el.track, el.glass, el.uline].forEach((x) => x.classList.toggle('dragging', ui.dragging));
   el.track.style.transform = 'translateX(' + (-ui.idx * L.W + ui.drag) + 'px)';
   el.glass.style.opacity = t.toFixed(3);
   [...el.nav.querySelectorAll('button')].forEach((b) => b.classList.toggle('on', Number(b.dataset.i) === ui.idx));
@@ -197,24 +197,50 @@ function placeBal() {
   const home = ui.balPos === 'home';
   const baseY = home ? L.homeY : L.topY;
   const sc = home ? 1 : 0.5;
-  let y = baseY, o = 1;
-  if (ui.dragging && !isOverscroll()) {
+  // na bocznych ekranach kwota jest „częścią” ekranu: przesuwa się dokładnie tak jak on
+  const side = !home && ui.idx !== 1 && ui.balPhase === 'in';
+  let y = baseY, o = 1, bx = 0;
+  if (side && ui.dragging) {
+    bx = ui.drag;
+  } else if (home && ui.dragging && !ui.springing && !isOverscroll()) {
     const off = Math.min(1, Math.abs(ui.drag) / L.W * 3);
     y = baseY - 22 * off; o = 1 - off;
-  } else if (ui.balPhase === 'out') { y = baseY - 22; o = 0; }
+  } else if (ui.balPhase === 'out') { y = baseY - 22; o = 0; bx = ui.balX || 0; }
   else if (ui.balPhase === 'pre') { y = home ? baseY - 40 : baseY + 34; o = 0; }
+  if (ui.balPhase !== 'out') ui.balX = bx;
+  el.bal.classList.toggle('dragging', ui.dragging && (!ui.springing || side));
   el.bal.classList.toggle('ph-out', ui.balPhase === 'out');
   el.bal.classList.toggle('ph-pre', ui.balPhase === 'pre');
   el.bal.style.opacity = o;
-  // na Historii / Kosztach stałych kwota rusza się razem z ekranem przy sprężynowaniu krawędzi
-  const bx = (!home && ui.dragging && isOverscroll()) ? ui.drag : 0;
   el.bal.style.transform = 'translateX(' + bx.toFixed(1) + 'px) translateY(' + Math.round(y) + 'px) scale(' + sc + ')';
 }
 let bt1, bt2;
-function goTo(i) {
+// sprężyna dociągająca ekran po puszczeniu palca – zachowuje prędkość palca, bez szarpnięcia
+let springRaf = 0;
+function stopSpring() { if (springRaf) { cancelAnimationFrame(springRaf); springRaf = 0; return true; } return false; }
+function springTo(fromDrag, v0) {
+  stopSpring();
+  const k = 190, c = 2 * Math.sqrt(k) * 0.92;
+  let x = fromDrag, v = v0 || 0, last = performance.now();
+  ui.springing = true; ui.dragging = true;
+  const step = (t) => {
+    const dt = Math.min(0.032, (t - last) / 1000); last = t;
+    v += (-k * x - c * v) * dt; x += v * dt;
+    if (Math.abs(x) < 0.4 && Math.abs(v) < 8) {
+      springRaf = 0; ui.drag = 0; ui.dragging = false; ui.springing = false; placeAll(); return;
+    }
+    ui.drag = x; placeAll();
+    springRaf = requestAnimationFrame(step);
+  };
+  ui.drag = x; placeAll();
+  springRaf = requestAnimationFrame(step);
+}
+function goTo(i, spring) {
   const target = i === 1 ? 'home' : 'top';
   clearTimeout(bt1); clearTimeout(bt2);
-  ui.idx = i; ui.drag = 0; ui.dragging = false;
+  if (target !== ui.balPos) ui.balPhase = 'out';
+  if (spring) { ui.idx = i; springTo(spring.drag, spring.v); }
+  else { stopSpring(); ui.springing = false; ui.idx = i; ui.drag = 0; ui.dragging = false; }
   if (target === ui.balPos) { ui.balPhase = 'in'; placeAll(); return; }
   ui.balPhase = 'out'; placeAll();
   bt1 = setTimeout(() => {
@@ -229,7 +255,8 @@ let P = null, raf = 0;
 el.app.addEventListener('pointerdown', (e) => {
   if (document.querySelector('.ov')) return;
   stopJelly();
-  P = { x: e.clientX, y: e.clientY, axis: null };
+  const caught = stopSpring();
+  P = { x: e.clientX, y: e.clientY, axis: null, base: caught ? ui.drag : 0, samples: [] };
 });
 el.app.addEventListener('pointermove', (e) => {
   if (!P) return;
@@ -240,9 +267,12 @@ el.app.addEventListener('pointermove', (e) => {
   }
   if (P.axis === 'x') {
     ui.moved = true;
-    let d = dx;
+    let d = dx + P.base;
     if ((ui.idx === 0 && d > 0) || (ui.idx === 2 && d < 0)) d = rubber(d);
-    ui.drag = d; ui.dragging = true;
+    ui.drag = d; ui.dragging = true; ui.springing = false;
+    const now = performance.now();
+    P.samples.push({ x: e.clientX, t: now });
+    while (P.samples.length > 2 && now - P.samples[0].t > 100) P.samples.shift();
     if (!raf) raf = requestAnimationFrame(() => { raf = 0; placeAll(); });
   }
 });
@@ -290,7 +320,8 @@ function jelly(fromX) {
 }
 function endDrag() {
   if (!P) return;
-  const axis = P.axis; P = null;
+  const axis = P.axis, base = P.base, samples = P.samples; P = null;
+  if (axis !== 'x' && base) { springTo(ui.drag, 0); return; }
   if (axis === 'x') {
     if (isOverscroll()) {
       const from = ui.drag;
@@ -300,10 +331,17 @@ function endDrag() {
       setTimeout(() => { ui.moved = false; }, 60);
       return;
     }
+    let v = 0;
+    if (samples.length > 1) {
+      const a = samples[0], b = samples[samples.length - 1];
+      if (b.t > a.t) v = (b.x - a.x) / ((b.t - a.t) / 1000);
+    }
     let i = ui.idx;
-    if (ui.drag < -70) i = Math.min(2, i + 1);
-    if (ui.drag > 70) i = Math.max(0, i - 1);
-    goTo(i);
+    const flick = Math.abs(v) > 450;
+    if ((flick && v < 0) || (!flick && ui.drag < -L.W * 0.22)) i = Math.min(2, i + 1);
+    else if ((flick && v > 0) || (!flick && ui.drag > L.W * 0.22)) i = Math.max(0, i - 1);
+    const fromDrag = ui.drag + (i - ui.idx) * L.W;
+    goTo(i, { drag: fromDrag, v: Math.max(-4000, Math.min(4000, v)) });
     setTimeout(() => { ui.moved = false; }, 60);
   }
 }
@@ -647,6 +685,8 @@ function openFixedEdit(id) {
 }
 
 /* --- ustawienia --- */
+const ICO_EXP = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>';
+const ICO_IMP = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>';
 function openSettings() {
   openModal('');
   const main = () => {
@@ -654,8 +694,13 @@ function openSettings() {
       '<div class="ct">ustawienia</div>' +
       '<div class="sline"><span>budżet startowy</span><b>' + fmt(S.start) + ' zł</b></div>' +
       '<div class="sline"><span>wpisy w historii</span><b>' + S.entries.length + '</b></div>' +
+      '<div class="btnrow" style="margin-top:6px"><button class="btn ghost sm" id="sExp">' + ICO_EXP + 'eksportuj</button><button class="btn ghost sm" id="sImp" type="button">' + ICO_IMP + 'importuj</button></div>' +
+      '<input type="file" id="sImpFile" accept="application/json,.json" style="display:none">' +
       '<button class="btn out" id="sReset" style="margin-top:4px">resetuj budżet</button>'
     );
+    $('#sExp', card).addEventListener('click', exportData);
+    $('#sImp', card).addEventListener('click', () => $('#sImpFile', card).click());
+    $('#sImpFile', card).addEventListener('change', (ev) => { const file = ev.target.files && ev.target.files[0]; if (file) confirmImport(file); });
     $('#sReset', card).addEventListener('click', confirmReset);
   };
   const confirmReset = () => {

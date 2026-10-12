@@ -138,6 +138,8 @@ a{color:#bdbdbd}
 .btn.ghost{background:transparent;border-color:#5a5a5a;color:#cfcfcf}
 .btnrow{display:flex;gap:10px;justify-content:center}
 .btnrow .btn{width:140px}
+.btn.sm{height:46px;font-size:15px;display:inline-flex;align-items:center;justify-content:center;gap:8px;background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.14);color:#e6e6e6}
+.btn.sm svg{opacity:.85}
 .sline{display:flex;justify-content:space-between;font-size:15px;color:#9a9a9a;padding:0 4px}
 .sline b{color:#fff;font-weight:400}
 .links{display:flex;justify-content:center;gap:22px;font-size:14px}
