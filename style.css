@@ -30,9 +30,9 @@ a{color:#bdbdbd}
 .glass2{position:absolute;inset:0;z-index:1;pointer-events:none;opacity:0;will-change:opacity;background:linear-gradient(160deg,rgba(255,255,255,.06) 0%,rgba(255,255,255,0) 30%,rgba(255,255,255,0) 65%,rgba(255,255,255,.035) 100%),rgba(10,10,12,.4);-webkit-backdrop-filter:blur(16px) saturate(150%);backdrop-filter:blur(16px) saturate(150%);transition:opacity .58s var(--ease)}
 
 /* ---------- ekrany ---------- */
-.track{position:absolute;top:0;left:0;bottom:0;width:300%;display:flex;z-index:2;transition:transform .58s var(--ease);will-change:transform}
+.track{position:absolute;top:0;left:0;bottom:0;width:300%;display:flex;z-index:2;transform:translateX(-33.3334%);transition:transform .58s var(--ease);will-change:transform}
 .panel{position:relative;width:33.3334%;height:100%;flex:0 0 33.3334%}
-.dragging{transition:none !important}
+.dragging,.booting .track,.booting .glass2,.booting .uline,.booting .bal{transition:none !important}
 
 /* ---------- kwota budżetu ---------- */
 .bal{position:absolute;left:0;right:0;top:0;z-index:5;text-align:center;transform-origin:50% 0;pointer-events:none;white-space:nowrap;line-height:1;font-family:'Abril Fatface',serif;font-style:italic;font-size:72px;letter-spacing:.01em;transition:transform .3s cubic-bezier(.2,.8,.25,1),opacity .24s ease,font-size .45s ease}

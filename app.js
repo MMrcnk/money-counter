@@ -790,8 +790,10 @@ document.addEventListener('focusout', () => setTimeout(() => window.scrollTo(0, 
 window.addEventListener('orientationchange', layoutSoon);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { renderPill(); renderFixed(); } });
 
+el.app.classList.add('booting');
 renderPill(); renderHistory(); renderFixed(); renderRain();
 layout();
+setTimeout(() => el.app.classList.remove('booting'), 400);
 renderBalance('intro');
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(layoutSoon);
 if (!S.onboarded) openOnboarding();
