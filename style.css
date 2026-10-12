@@ -15,7 +15,8 @@ body{position:fixed;inset:0;color:#fff;font-family:'DM Sans',system-ui,sans-seri
 button{font:inherit;color:inherit;-webkit-tap-highlight-color:transparent}
 a{color:#bdbdbd}
 
-.app{position:fixed;top:0;left:0;right:0;bottom:auto;height:100vh;height:100lvh;overflow:hidden;background:#000;touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
+.app.hidden{opacity:0}
+.app{transition:opacity .35s ease;position:fixed;top:0;left:0;right:0;bottom:auto;height:100vh;height:100lvh;overflow:hidden;background:#000;touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
 
 /* ---------- spadające banknoty ---------- */
 .rain{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:0;-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 12%,#000 80%,transparent 100%);mask-image:linear-gradient(to bottom,transparent 0,#000 12%,#000 80%,transparent 100%)}

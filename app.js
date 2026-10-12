@@ -800,9 +800,26 @@ el.app.classList.add('booting');
 renderPill(); renderHistory(); renderFixed(); renderRain();
 layout();
 
-renderBalance('intro');
-if (document.fonts && document.fonts.ready) document.fonts.ready.then(layoutSoon);
-if (!S.onboarded) openOnboarding();
+// iOS przy starcie przez chwilę podaje złe wymiary ekranu – czekamy, aż się ustabilizują,
+// i dopiero wtedy płynnie pokazujemy aplikację (bez przeskakiwania elementów)
+function whenStable(cb) {
+  let last = '', same = 0;
+  const t0 = performance.now();
+  const tick = () => {
+    const sa = safe();
+    const key = el.app.clientWidth + 'x' + el.app.clientHeight + '|' + sa.top + '|' + sa.bottom;
+    if (key === last) same++; else { same = 0; last = key; layout(); }
+    if (same >= 8 || performance.now() - t0 > 1000) cb(); else requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+const fontsReady = (document.fonts && document.fonts.ready) ? Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 800))]) : Promise.resolve();
+fontsReady.then(() => whenStable(() => {
+  layout();
+  el.app.classList.remove('hidden');
+  renderBalance('intro');
+  if (!S.onboarded) openOnboarding();
+}));
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
