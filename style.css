@@ -2,7 +2,7 @@
   --st: env(safe-area-inset-top, 0px);
   --sb: env(safe-area-inset-bottom, 0px);
   --nb: max(calc(var(--sb) - 14px), 18px);
-  --ease: cubic-bezier(.22,.9,.24,1);
+  --ease: cubic-bezier(.45,.05,.2,1);
   --green-txt: #cfe5c8;
   --red-txt: #f0d2cf;
   --glass-bg: rgba(18,18,20,.5);
@@ -27,10 +27,10 @@ a{color:#bdbdbd}
 @keyframes sway{from{transform:translateX(calc(var(--sx) * -1)) rotate(var(--r0)) rotateY(0deg) rotateX(var(--rx0))}to{transform:translateX(var(--sx)) rotate(var(--r1)) rotateY(var(--ry)) rotateX(var(--rx1))}}
 @media (prefers-reduced-motion: reduce){.rain{display:none}}
 
-.glass2{position:absolute;inset:0;z-index:1;pointer-events:none;opacity:0;background:linear-gradient(160deg,rgba(255,255,255,.06) 0%,rgba(255,255,255,0) 30%,rgba(255,255,255,0) 65%,rgba(255,255,255,.035) 100%),rgba(10,10,12,.4);-webkit-backdrop-filter:blur(16px) saturate(150%);backdrop-filter:blur(16px) saturate(150%);transition:opacity .68s var(--ease)}
+.glass2{position:absolute;inset:0;z-index:1;pointer-events:none;opacity:0;background:linear-gradient(160deg,rgba(255,255,255,.06) 0%,rgba(255,255,255,0) 30%,rgba(255,255,255,0) 65%,rgba(255,255,255,.035) 100%),rgba(10,10,12,.4);-webkit-backdrop-filter:blur(16px) saturate(150%);backdrop-filter:blur(16px) saturate(150%);transition:opacity .8s var(--ease)}
 
 /* ---------- ekrany ---------- */
-.track{position:absolute;top:0;left:0;bottom:0;width:300%;display:flex;z-index:2;transition:transform .68s var(--ease);will-change:transform}
+.track{position:absolute;top:0;left:0;bottom:0;width:300%;display:flex;z-index:2;transition:transform .8s var(--ease);will-change:transform}
 .panel{position:relative;width:33.3334%;height:100%;flex:0 0 33.3334%}
 .dragging{transition:none !important}
 
@@ -67,7 +67,7 @@ a{color:#bdbdbd}
 .nav{position:absolute;bottom:var(--nb);left:16px;right:16px;height:72px;z-index:6;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start;padding-top:10px;border-radius:30px;background:var(--glass-bg);-webkit-backdrop-filter:blur(22px) saturate(160%);backdrop-filter:blur(22px) saturate(160%);border:1px solid var(--glass-line);box-shadow:var(--glass-shadow)}
 .nav button{background:none;border:0;color:#8a8a8e;display:flex;align-items:center;justify-content:center;height:46px;padding:0;cursor:pointer;transition:color .3s}
 .nav button.on{color:#fff}
-.uline{position:absolute;top:58px;left:0;width:30px;height:2px;border-radius:2px;background:#fff;transition:transform .68s var(--ease)}
+.uline{position:absolute;top:58px;left:0;width:30px;height:2px;border-radius:2px;background:#fff;transition:transform .8s var(--ease)}
 
 /* ---------- historia ---------- */
 .scroll{position:absolute;top:calc(var(--st) + 88px);bottom:0;left:0;right:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:0 18px calc(var(--nb) + 104px) 8px;scrollbar-width:none}

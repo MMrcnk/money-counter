@@ -184,13 +184,13 @@ let layoutT; function layoutSoon() { clearTimeout(layoutT); layoutT = setTimeout
 function placeAll() {
   const pos = ui.idx - ui.drag / L.W;
   const t = Math.min(1, Math.abs(pos - 1));
+  [el.track, el.glass, el.uline, el.bal].forEach((x) => x.classList.toggle('dragging', ui.dragging));
   el.track.style.transform = 'translateX(' + (-ui.idx * L.W + ui.drag) + 'px)';
   el.glass.style.opacity = t.toFixed(3);
   [...el.nav.querySelectorAll('button')].forEach((b) => b.classList.toggle('on', Number(b.dataset.i) === ui.idx));
   const nw = el.nav.clientWidth;
   el.uline.style.transform = 'translateX(' + Math.round(nw / 6 - 15 + (nw / 3) * Math.max(0, Math.min(2, pos))) + 'px)';
   el.gear.classList.toggle('hide', !(ui.idx === 1 && !ui.dragging));
-  [el.track, el.glass, el.uline, el.bal].forEach((x) => x.classList.toggle('dragging', ui.dragging));
   placeBal();
 }
 function placeBal() {
@@ -206,7 +206,9 @@ function placeBal() {
   el.bal.classList.toggle('ph-out', ui.balPhase === 'out');
   el.bal.classList.toggle('ph-pre', ui.balPhase === 'pre');
   el.bal.style.opacity = o;
-  el.bal.style.transform = 'translateY(' + Math.round(y) + 'px) scale(' + sc + ')';
+  // na Historii / Kosztach stałych kwota rusza się razem z ekranem przy sprężynowaniu krawędzi
+  const bx = (!home && ui.dragging && isOverscroll()) ? ui.drag : 0;
+  el.bal.style.transform = 'translateX(' + bx.toFixed(1) + 'px) translateY(' + Math.round(y) + 'px) scale(' + sc + ')';
 }
 let bt1, bt2;
 function goTo(i) {
@@ -257,6 +259,7 @@ function stopJelly() {
   cancelAnimationFrame(jellyRaf); jellyRaf = 0;
   if (jellyPanel) jellyPanel.style.transform = '';
   el.track.classList.remove('dragging');
+  el.bal.classList.remove('dragging');
 }
 function jelly(fromX) {
   stopJelly();
@@ -265,6 +268,7 @@ function jelly(fromX) {
   const k = 260, c = 13;           // sztywność i tłumienie sprężyny
   let x = fromX, v = 0, last = performance.now();
   el.track.classList.add('dragging');
+  el.bal.classList.add('dragging');
   const step = (t) => {
     const dt = Math.min(0.032, (t - last) / 1000); last = t;
     v += (-k * x - c * v) * dt; x += v * dt;
@@ -272,10 +276,12 @@ function jelly(fromX) {
     const sk = Math.max(-3, Math.min(3, v * 0.0035));
     const sc = 1 + Math.min(0.025, Math.abs(x) / L.W * 0.12);
     panel.style.transform = 'skewX(' + (-sk).toFixed(3) + 'deg) scaleX(' + sc.toFixed(4) + ')';
+    if (ui.balPos === 'top') el.bal.style.transform = 'translateX(' + x.toFixed(1) + 'px) translateY(' + L.topY + 'px) scale(0.5) skewX(' + (-sk).toFixed(3) + 'deg)';
     if (Math.abs(x) < 0.3 && Math.abs(v) < 4) {
       jellyRaf = 0; panel.style.transform = '';
       el.track.style.transform = 'translateX(' + base + 'px)';
       el.track.classList.remove('dragging');
+      el.bal.classList.remove('dragging'); placeBal();
       return;
     }
     jellyRaf = requestAnimationFrame(step);
