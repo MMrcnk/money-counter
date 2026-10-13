@@ -792,13 +792,13 @@ function openSettings() {
   openModal('');
   const main = () => {
     const card = swapModal(
-      '<div class="ct">ustawienia</div>' +
+      (sync.isOn()
+        ? '<button class="prof" id="sProf" type="button" aria-expanded="false"><span class="av">' + ICO_USER + '</span><span class="pm">' + esc(sync.email()) + '</span><span class="ps" id="sSt">' + sync.statusText() + '</span></button>' +
+          '<div class="pout" id="sPout"><div><button class="btn out sm" id="sOut" type="button" tabindex="-1">wyloguj</button></div></div>'
+        : '<button class="prof off" id="sSync" type="button"><span class="av">' + ICO_USER + '</span><span class="pm">nie zalogowano</span><span class="ps">stuknij, aby włączyć synchronizację</span></button>') +
+      '<div class="sdiv"></div>' +
       '<div class="sline"><span>konta</span><b>' + S.accounts.length + '</b></div>' +
       '<div class="sline"><span>wpisy w historii</span><b>' + S.entries.length + '</b></div>' +
-      (sync.isOn()
-        ? '<div class="sline"><span>synchronizacja</span><b id="sSt">' + sync.statusText() + '</b></div>' +
-          '<div class="sline" style="margin-top:-6px"><span style="font-size:13px">' + esc(sync.email()) + '</span><button class="lnk" id="sOut" type="button">wyloguj</button></div>'
-        : '<button class="btn ghost sm" id="sSync" type="button">' + ICO_SYNC + 'synchronizacja telefonów</button>') +
       '<div class="btnrow" style="margin-top:6px"><button class="btn ghost sm" id="sExp">' + ICO_EXP + 'eksportuj</button><button class="btn ghost sm" id="sImp" type="button">' + ICO_IMP + 'importuj</button></div>' +
       '<input type="file" id="sImpFile" accept="application/json,.json" style="display:none">' +
       '<button class="btn out" id="sReset" style="margin-top:4px">resetuj budżet</button>'
@@ -808,13 +808,19 @@ function openSettings() {
     $('#sImpFile', card).addEventListener('change', (ev) => { const file = ev.target.files && ev.target.files[0]; if (file) confirmImport(file); });
     $('#sReset', card).addEventListener('click', confirmReset);
     if ($('#sSync', card)) $('#sSync', card).addEventListener('click', () => syncLoginCard(main, () => closeModal(() => { renderAll(); renderBalance('intro'); })));
+    const prof = $('#sProf', card), pout = $('#sPout', card);
+    if (prof) prof.addEventListener('click', () => {
+      const open = !pout.classList.contains('open');
+      pout.classList.toggle('open', open); prof.setAttribute('aria-expanded', open);
+      $('#sOut', card).tabIndex = open ? 0 : -1;
+    });
     if ($('#sOut', card)) $('#sOut', card).addEventListener('click', confirmOut);
     const st = $('#sSt', card); if (st) sync.onStatus(() => { st.textContent = sync.statusText(); });
   };
   const confirmOut = () => {
     const card = swapModal(
-      '<div class="ct">wylogować?</div>' +
-      '<div class="warn">Dane zostaną na tym telefonie, ale przestaną się synchronizować z drugim.</div>' +
+      '<div class="ct">na pewno?</div>' +
+      '<div class="warn">Wylogujesz konto ' + esc(sync.email()) + '. Dane zostaną na tym telefonie, ale przestaną się synchronizować z drugim.</div>' +
       '<div class="btnrow"><button class="btn out" id="oYes">wyloguj</button><button class="btn ghost" id="oNo">anuluj</button></div>'
     );
     $('#oNo', card).addEventListener('click', main);
@@ -990,6 +996,7 @@ function openOnboarding() {
 /* ---------- synchronizacja telefonów (Firebase) ----------
    Każde konto, wpis i koszt stały to osobny dokument w chmurze (users/{uid}/items).
    Telefon wysyła tylko to, co się zmieniło, i na bieżąco odbiera zmiany z drugiego. */
+const ICO_USER = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.5 20c1.2-3.6 4.1-5.5 7.5-5.5s6.3 1.9 7.5 5.5"/></svg>';
 const ICO_SYNC = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 3v5h5"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 21v-5h-5"/></svg>';
 var sync = (() => {
   const KEY = 'mc-sync';
@@ -1154,7 +1161,7 @@ var sync = (() => {
     isOn: () => st.on,
     email: () => st.email,
     status: () => status,
-    statusText: () => ({ ok: 'włączona ✓', pending: 'wysyłanie…', error: 'problem z połączeniem', off: 'wyłączona' }[status] || ''),
+    statusText: () => ({ ok: 'zsynchronizowano ✓', pending: 'synchronizuję…', error: 'problem z połączeniem', off: 'wyłączona' }[status] || ''),
     onStatus: (f) => { subs.add(f); return () => subs.delete(f); },
     changed() { if (!uid) return; clearTimeout(timer); timer = setTimeout(flush, 700); },
     forgetAtt() { st.att = {}; persist(); },
