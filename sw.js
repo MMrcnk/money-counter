@@ -1,5 +1,5 @@
 // Zmień numer wersji przy każdej aktualizacji plików, żeby telefon pobrał nową wersję.
-const VERSION = 'budzet-v28';
+const VERSION = 'budzet-v29';
 const FILES = [
   './',
   './index.html',

@@ -82,9 +82,24 @@ function balance() {
   return round2(b);
 }
 const accName = (id) => { const a = S.accounts.find((x) => x.id === id); return a ? a.name : ''; };
+// rodzaj konta: bank albo gotówka
+const ICO_BANK = '<svg class="ki" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 9 12 4.2 20.5 9"/><path d="M4.5 9.5h15"/><path d="M6.5 12.5v4.5M10.2 12.5v4.5M13.8 12.5v4.5M17.5 12.5v4.5"/><path d="M4 19.8h16"/></svg>';
+const ICO_CASH = '<svg class="ki" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.6 3.6 10.2 6h3.6l1.6-2.4c-1.1-.5-2.2-.7-3.4-.7s-2.3.2-3.4.7z"/><path d="M9.6 6.6c-3 2.1-5.4 5.4-5.4 8.7 0 3 2.5 4.9 7.8 4.9s7.8-1.9 7.8-4.9c0-3.3-2.4-6.6-5.4-8.7"/><path d="M9.4 6.6h5.2"/><text x="12" y="16.6" text-anchor="middle" font-size="6.4" font-family="DM Sans, system-ui, sans-serif" font-weight="500" fill="currentColor" stroke="none">zł</text></svg>';
+const accIco = (a) => (a && a.kind === 'cash' ? ICO_CASH : ICO_BANK);
+function kindPick(kind) {
+  return '<div class="kinds" role="radiogroup" aria-label="Rodzaj konta">' +
+    '<button type="button" class="kind' + (kind !== 'cash' ? ' on' : '') + '" data-kind="bank" role="radio" aria-checked="' + (kind !== 'cash') + '">' + ICO_BANK + '<span>konto w banku</span></button>' +
+    '<button type="button" class="kind' + (kind === 'cash' ? ' on' : '') + '" data-kind="cash" role="radio" aria-checked="' + (kind === 'cash') + '">' + ICO_CASH + '<span>gotówka</span></button></div>';
+}
+function mountKind(root, onPick) {
+  root.querySelectorAll('.kind').forEach((b) => b.addEventListener('click', () => {
+    root.querySelectorAll('.kind').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', x === b); });
+    onPick(b.dataset.kind);
+  }));
+}
 function accChips(selected, type) {
   return '<div class="clabel">' + (type === 'in' ? 'na które konto?' : 'z którego konta?') + '</div><div class="chips">' +
-    S.accounts.map((a) => '<button type="button" class="chip ' + type + (a.id === selected ? ' on' : '') + '" data-acc="' + a.id + '">' + CHIPCHK + esc(a.name) + '</button>').join('') + '</div>';
+    S.accounts.map((a) => '<button type="button" class="chip ' + type + (a.id === selected ? ' on' : '') + '" data-acc="' + a.id + '">' + CHIPCHK + accIco(a) + esc(a.name) + '</button>').join('') + '</div>';
 }
 const CHIPCHK = '<svg class="ck" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 7.3l2.6 2.6L11 4.5"/></svg>';
 function mountChips(root, onPick) {
@@ -514,6 +529,18 @@ function renderHistory() {
   });
   el.hist.innerHTML = html;
 }
+// listy łagodnie rozmywają się na krawędziach, ale tylko tam, gdzie coś jest schowane
+const FADE = 56;
+function edgeFade(box) {
+  const t = box.scrollTop, r = box.scrollHeight - box.clientHeight - t;
+  box.style.setProperty('--ft', Math.max(0, Math.min(t, FADE)) + 'px');
+  box.style.setProperty('--fb', Math.max(0, Math.min(r, FADE)) + 'px');
+}
+[el.hist, el.flist].forEach((box) => {
+  box.addEventListener('scroll', () => edgeFade(box), { passive: true });
+  new MutationObserver(() => edgeFade(box)).observe(box, { childList: true });
+  window.addEventListener('resize', () => edgeFade(box));
+});
 el.hist.addEventListener('click', (e) => { const r = e.target.closest('.row'); if (r) openEntry(Number(r.dataset.id)); });
 el.cal.addEventListener('click', () => { ui.range = ui.range === '14' ? 'all' : '14'; renderHistory(); });
 
@@ -889,7 +916,7 @@ el.gear.addEventListener('click', openSettings);
 
 /* --- konta --- */
 function openAccounts() {
-  const rows = S.accounts.map((a) => '<button class="accrow" data-id="' + a.id + '"><span class="an">' + esc(a.name) + '</span><span class="ab">' + fmt(accBalance(a.id)) + ' zł</span></button>').join('');
+  const rows = S.accounts.map((a) => '<button class="accrow" data-id="' + a.id + '"><span class="ai">' + accIco(a) + '</span><span class="an">' + esc(a.name) + '</span><span class="ab">' + fmt(accBalance(a.id)) + ' zł</span></button>').join('');
   const card = openModal(
     '<div class="ct">twoje konta</div>' +
     '<div class="acclist">' + (rows || '<div class="warn">brak kont</div>') + '</div>' +
@@ -904,17 +931,24 @@ el.accBtn.addEventListener('click', openAccounts);
 function openAccountAdd() {
   const card = openModal(
     '<div class="ct">nowe konto</div>' +
+    kindPick('bank') +
     '<input class="inp" id="nName" type="text" placeholder="nazwa konta, np. mBank" aria-label="Nazwa konta" autocomplete="off">' +
     '<div class="amtrow"><input class="inp" id="nAmt" type="text" inputmode="decimal" placeholder="ile masz na koncie" aria-label="Stan konta" autocomplete="off"><span class="zl">zł</span></div>' +
     '<div class="warn" style="color:#8a8a8a;font-size:13px">To stan konta – doliczy się do budżetu, ale nie trafi do historii jako przychód.</div>' +
     '<button class="btn in" id="nGo">dodaj konto</button>'
   );
+  let kind = 'bank';
+  mountKind(card, (k) => {
+    kind = k;
+    $('#nName', card).placeholder = k === 'cash' ? 'nazwa, np. portfel' : 'nazwa konta, np. mBank';
+    $('#nAmt', card).placeholder = k === 'cash' ? 'ile masz w gotówce' : 'ile masz na koncie';
+  });
   $('#nGo', card).addEventListener('click', () => {
     const name = $('#nName', card).value.trim(), v = num($('#nAmt', card).value || '0');
     $('#nName', card).classList.toggle('bad', !name);
     $('#nAmt', card).classList.toggle('bad', isNaN(v));
     if (!name || isNaN(v)) return;
-    S.accounts.push({ id: newId(), name, opening: round2(v) }); save();
+    S.accounts.push({ id: newId(), name, opening: round2(v), kind }); save();
     closeModal(() => {});
     renderAll();
   });
@@ -927,12 +961,14 @@ function openAccountEdit(id) {
   const main = () => {
     const card = swapModal(
       '<div class="ct">konto</div>' +
+      kindPick(a.kind) +
       '<input class="inp" id="kName" type="text" aria-label="Nazwa konta" value="' + esc(a.name) + '" autocomplete="off">' +
       '<div class="sline" style="padding:4px 6px"><span>stan konta</span><b style="font-size:18px">' + fmt(accBalance(a.id)) + ' zł</b></div>' +
       '<div class="sline" style="padding:0 6px"><span>wpisy z tym kontem</span><b>' + S.entries.filter((e) => e.acc === a.id).length + '</b></div>' +
       '<button class="btn out" id="kDel" style="margin-top:8px">usuń konto</button>'
     );
     $('#kName', card).addEventListener('input', (ev) => { a.name = ev.target.value; save(); });
+    mountKind(card, (k) => { a.kind = k; save(); });
     $('#kDel', card).addEventListener('click', confirmDel);
   };
   const confirmDel = () => {
@@ -964,6 +1000,7 @@ function openOnboarding() {
   const card = openModal(
     '<div class="ct">dodaj pierwsze konto</div>' +
     '<div class="obsub">kolejne dodasz pod ikoną karty</div>' +
+    kindPick('bank') +
     '<input class="inp" id="oName" type="text" placeholder="nazwa konta, np. mBank" aria-label="Nazwa konta" autocomplete="off">' +
     '<div class="amtrow"><input class="inp" id="oAmt" type="text" inputmode="decimal" placeholder="ile masz na koncie" aria-label="Stan konta" autocomplete="off"><span class="zl">zł</span></div>' +
     '<button class="btn in" id="oGo" style="margin-top:6px">zaczynamy</button>' +
@@ -977,12 +1014,18 @@ function openOnboarding() {
       closeModal(() => { openOnboarding(); });
     }
   ));
+  let kind = 'bank';
+  mountKind(card, (k) => {
+    kind = k;
+    $('#oName', card).placeholder = k === 'cash' ? 'nazwa, np. portfel' : 'nazwa konta, np. mBank';
+    $('#oAmt', card).placeholder = k === 'cash' ? 'ile masz w gotówce' : 'ile masz na koncie';
+  });
   $('#oGo', card).addEventListener('click', () => {
     const v = num($('#oAmt', card).value);
     $('#oAmt', card).classList.toggle('bad', isNaN(v));
     if (isNaN(v)) return;
     const nm = $('#oName', card).value.trim() || 'główne konto';
-    const a = { id: newId(), name: nm, opening: round2(v) };
+    const a = { id: newId(), name: nm, opening: round2(v), kind };
     S.accounts.push(a); S.lastAcc = a.id;
     S.start = 0; S.onboarded = true; save();
     renderAccInfo();
