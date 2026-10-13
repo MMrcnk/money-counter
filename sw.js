@@ -1,10 +1,11 @@
 // Zmień numer wersji przy każdej aktualizacji plików, żeby telefon pobrał nową wersję.
-const VERSION = 'budzet-v26';
+const VERSION = 'budzet-v27';
 const FILES = [
   './',
   './index.html',
   './style.css',
   './app.js',
+  './fb.js',
   './kasa.mp3',
   './wydatek.mp3',
   './manifest.webmanifest',
@@ -43,6 +44,7 @@ self.addEventListener('activate', (e) => {
 // Najpierw sieć (żeby aktualizacje z GitHuba docierały), a bez internetu – kopia z pamięci.
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
+  if (new URL(e.request.url).origin !== location.origin) return; // Firebase idzie prosto do sieci
   e.respondWith(
     fetch(e.request)
       .then((res) => {

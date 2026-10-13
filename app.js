@@ -49,8 +49,14 @@ try {
   const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
   if (saved) S = Object.assign(S, saved);
 } catch (e) {}
-function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) {} }
-const newId = () => S.nextId++;
+function saveLocal() { try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) {} }
+function save() { saveLocal(); if (typeof sync !== 'undefined') sync.changed(); }
+// unikalne numery (czas + losowa końcówka), żeby wpisy z dwóch telefonów się nie pokrywały
+const newId = () => {
+  let id = Date.now() * 100 + Math.floor(Math.random() * 100);
+  if (S.lastGen && id <= S.lastGen) id = S.lastGen + 1;
+  S.lastGen = id; return id;
+};
 // konta: budżet = suma stanów wszystkich kont; stan konta = kwota przy założeniu + przychody − wydatki z tego konta
 function migrate() {
   if (!Array.isArray(S.accounts)) {
@@ -789,6 +795,10 @@ function openSettings() {
       '<div class="ct">ustawienia</div>' +
       '<div class="sline"><span>konta</span><b>' + S.accounts.length + '</b></div>' +
       '<div class="sline"><span>wpisy w historii</span><b>' + S.entries.length + '</b></div>' +
+      (sync.isOn()
+        ? '<div class="sline"><span>synchronizacja</span><b id="sSt">' + sync.statusText() + '</b></div>' +
+          '<div class="sline" style="margin-top:-6px"><span style="font-size:13px">' + esc(sync.email()) + '</span><button class="lnk" id="sOut" type="button">wyloguj</button></div>'
+        : '<button class="btn ghost sm" id="sSync" type="button">' + ICO_SYNC + 'synchronizacja telefonów</button>') +
       '<div class="btnrow" style="margin-top:6px"><button class="btn ghost sm" id="sExp">' + ICO_EXP + 'eksportuj</button><button class="btn ghost sm" id="sImp" type="button">' + ICO_IMP + 'importuj</button></div>' +
       '<input type="file" id="sImpFile" accept="application/json,.json" style="display:none">' +
       '<button class="btn out" id="sReset" style="margin-top:4px">resetuj budżet</button>'
@@ -797,6 +807,18 @@ function openSettings() {
     $('#sImp', card).addEventListener('click', () => $('#sImpFile', card).click());
     $('#sImpFile', card).addEventListener('change', (ev) => { const file = ev.target.files && ev.target.files[0]; if (file) confirmImport(file); });
     $('#sReset', card).addEventListener('click', confirmReset);
+    if ($('#sSync', card)) $('#sSync', card).addEventListener('click', () => syncLoginCard(main, () => closeModal(() => { renderAll(); renderBalance('intro'); })));
+    if ($('#sOut', card)) $('#sOut', card).addEventListener('click', confirmOut);
+    const st = $('#sSt', card); if (st) sync.onStatus(() => { st.textContent = sync.statusText(); });
+  };
+  const confirmOut = () => {
+    const card = swapModal(
+      '<div class="ct">wylogować?</div>' +
+      '<div class="warn">Dane zostaną na tym telefonie, ale przestaną się synchronizować z drugim.</div>' +
+      '<div class="btnrow"><button class="btn out" id="oYes">wyloguj</button><button class="btn ghost" id="oNo">anuluj</button></div>'
+    );
+    $('#oNo', card).addEventListener('click', main);
+    $('#oYes', card).addEventListener('click', () => { sync.logout(); main(); });
   };
   const confirmReset = () => {
     const card = swapModal(
@@ -806,7 +828,7 @@ function openSettings() {
     );
     $('#rNo', card).addEventListener('click', main);
     $('#rYes', card).addEventListener('click', () => {
-      S.entries = []; S.start = 0; S.accounts.forEach((a) => { a.opening = 0; }); save();
+      S.entries = []; S.start = 0; S.accounts.forEach((a) => { a.opening = 0; }); sync.forgetAtt(); save();
       idb.clear().catch(() => {});
       closeModal(() => { goTo(1); renderPill(); renderHistory(); renderFixed(); renderRain(); renderBalance('intro'); });
     });
@@ -828,7 +850,7 @@ function openSettings() {
           await idb.set(Number(k), blob);
         }
         S = Object.assign({ onboarded: true, start: 0, entries: [], fixed: [], nextId: 1 }, data.state);
-        migrate(); save();
+        migrate(); sync.forgetAtt(); save();
         closeModal(() => { renderAll(); renderBalance('intro'); });
       } catch (err) {
         const c = swapModal('<div class="ct">nie udało się</div><div class="warn">To nie jest plik kopii z tej aplikacji.</div><button class="btn ghost" id="iOk">wróć</button>');
@@ -938,9 +960,17 @@ function openOnboarding() {
     '<div class="obsub">kolejne dodasz pod ikoną karty</div>' +
     '<input class="inp" id="oName" type="text" placeholder="nazwa konta, np. mBank" aria-label="Nazwa konta" autocomplete="off">' +
     '<div class="amtrow"><input class="inp" id="oAmt" type="text" inputmode="decimal" placeholder="ile masz na koncie" aria-label="Stan konta" autocomplete="off"><span class="zl">zł</span></div>' +
-    '<button class="btn in" id="oGo" style="margin-top:6px">zaczynamy</button>',
+    '<button class="btn in" id="oGo" style="margin-top:6px">zaczynamy</button>' +
+    '<button class="btn ghost sm" id="oSync" type="button">mam już dane na innym telefonie</button>',
     { locked: true }
   );
+  $('#oSync', card).addEventListener('click', () => syncLoginCard(
+    () => { closeModal(() => openOnboarding()); },
+    (hadData) => {
+      if (hadData) { closeModal(() => { renderAll(); renderBalance('intro'); }); return; }
+      closeModal(() => { openOnboarding(); });
+    }
+  ));
   $('#oGo', card).addEventListener('click', () => {
     const v = num($('#oAmt', card).value);
     $('#oAmt', card).classList.toggle('bad', isNaN(v));
@@ -953,6 +983,256 @@ function openOnboarding() {
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     closeModal(() => {});
     renderRain(); renderBalance('intro');
+  });
+}
+
+
+/* ---------- synchronizacja telefonów (Firebase) ----------
+   Każde konto, wpis i koszt stały to osobny dokument w chmurze (users/{uid}/items).
+   Telefon wysyła tylko to, co się zmieniło, i na bieżąco odbiera zmiany z drugiego. */
+const ICO_SYNC = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 3v5h5"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 21v-5h-5"/></svg>';
+var sync = (() => {
+  const KEY = 'mc-sync';
+  const KINDS = [['a', 'accounts'], ['e', 'entries'], ['f', 'fixed']];
+  let st = { on: false, email: '', shadow: {}, att: {} };
+  try { Object.assign(st, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) {}
+  const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) {} };
+  let F = null, uid = null, unsub = null, inflight = {}, timer = 0, status = st.on ? 'pending' : 'off';
+  let attBusy = false, pullBusy = false, renderT = 0;
+  const subs = new Set();
+  const setStatus = (s) => { if (s === status) return; status = s; subs.forEach((f) => { try { f(s); } catch (e) {} }); };
+
+  function load() {
+    if (F) return Promise.resolve(F);
+    if (window.MCFB) return Promise.resolve(F = window.MCFB);
+    return new Promise((res, rej) => {
+      const sc = document.createElement('script'); sc.src = 'fb.js';
+      sc.onload = () => (window.MCFB ? res(F = window.MCFB) : rej(new Error('load')));
+      sc.onerror = () => rej(Object.assign(new Error('load'), { code: 'load' }));
+      document.head.appendChild(sc);
+    });
+  }
+  const itemsCol = () => F.collection(F.db, 'users', uid, 'items');
+  const attDoc = (id) => F.doc(F.db, 'users', uid, 'att', String(id));
+  function localMap() {
+    const m = {};
+    for (const [k, coll] of KINDS) for (const it of S[coll] || []) m[k + it.id] = JSON.stringify(it);
+    return m;
+  }
+  const base = (k) => (k in inflight ? inflight[k] : (k in st.shadow ? st.shadow[k] : null));
+
+  function flush() {
+    clearTimeout(timer); timer = 0;
+    if (!uid) return;
+    const cur = localMap(), ops = [], seen = new Set();
+    const check = (k) => { if (seen.has(k)) return; seen.add(k); const v = k in cur ? cur[k] : null; if (base(k) !== v) ops.push([k, v]); };
+    Object.keys(cur).forEach(check); Object.keys(st.shadow).forEach(check); Object.keys(inflight).forEach(check);
+    for (let i = 0; i < ops.length; i += 400) {
+      const part = ops.slice(i, i + 400), b = F.writeBatch(F.db);
+      for (const [k, v] of part) { inflight[k] = v; b.set(F.doc(itemsCol(), k), { d: v, del: v === null, t: F.serverTimestamp() }); }
+      setStatus('pending');
+      b.commit().then(() => {
+        for (const [k, v] of part) { if (inflight[k] === v) delete inflight[k]; st.shadow[k] = v; }
+        persist();
+        if (!Object.keys(inflight).length) setStatus('ok');
+      }).catch(() => {
+        for (const [k, v] of part) if (inflight[k] === v) delete inflight[k];
+        setStatus('error');
+      });
+    }
+    pushAtt();
+  }
+
+  function applyRemote(snap) {
+    flush(); // najpierw wysyłamy własne niezapisane zmiany – one wygrywają
+    let changed = false;
+    snap.docChanges().forEach((ch) => {
+      const d = ch.doc; if (d.metadata.hasPendingWrites) return;
+      const k = d.id, data = ch.type === 'removed' ? null : d.data();
+      const v = !data || data.del || typeof data.d !== 'string' ? null : data.d;
+      if (k in inflight && inflight[k] !== v) return;
+      st.shadow[k] = v;
+      const kind = KINDS.find((x) => x[0] === k[0]); if (!kind) return;
+      const arr = S[kind[1]], id = Number(k.slice(1)), i = arr.findIndex((x) => x.id === id);
+      if (v === null) { if (i >= 0) { arr.splice(i, 1); changed = true; } return; }
+      if (i >= 0 && JSON.stringify(arr[i]) === v) return;
+      let obj; try { obj = JSON.parse(v); } catch (e) { return; }
+      if (i >= 0) { const o = arr[i]; Object.keys(o).forEach((x) => delete o[x]); Object.assign(o, obj); } else arr.push(obj);
+      changed = true;
+    });
+    persist();
+    if (changed) {
+      if (S.accounts.length) S.onboarded = true;
+      if (!S.accounts.some((a) => a.id === S.lastAcc)) S.lastAcc = S.accounts[0] && S.accounts[0].id;
+      saveLocal();
+      clearTimeout(renderT); renderT = setTimeout(() => { renderAll(); }, 60);
+    }
+    if (!snap.metadata.fromCache && !Object.keys(inflight).length) setStatus('ok');
+    pullAtt();
+  }
+
+  /* załączniki: zdjęcie zmniejszone do ~1600 px, trzymane jako osobny dokument */
+  const toUrl = (b) => new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(b); });
+  function shrink(blob, max, q) {
+    return new Promise((res, rej) => {
+      const u = URL.createObjectURL(blob), im = new Image();
+      im.onload = () => {
+        const s = Math.min(1, max / Math.max(im.naturalWidth, im.naturalHeight));
+        const c = document.createElement('canvas'); c.width = Math.round(im.naturalWidth * s); c.height = Math.round(im.naturalHeight * s);
+        c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); URL.revokeObjectURL(u);
+        c.toBlob((b) => (b ? res(b) : rej()), 'image/jpeg', q);
+      };
+      im.onerror = () => { URL.revokeObjectURL(u); rej(); };
+      im.src = u;
+    });
+  }
+  async function pack(blob) {
+    if (/^image\//.test(blob.type || '')) {
+      for (const [m, q] of [[1600, 0.72], [1200, 0.6], [900, 0.5]]) {
+        let b; try { b = await shrink(blob, m, q); } catch (e) { break; }
+        const d = await toUrl(b); if (d.length < 950000) return { d, type: 'image/jpeg' };
+      }
+      return null;
+    }
+    const d = await toUrl(blob); return d.length < 950000 ? { d, type: blob.type || 'application/pdf' } : null;
+  }
+  async function pushAtt() {
+    if (attBusy || !uid) return; attBusy = true;
+    try {
+      for (const e of S.entries.slice()) {
+        if (!e.att || st.att[e.id] || !uid) continue;
+        let blob = null; try { blob = await idb.get(e.id); } catch (er) {}
+        if (!blob) continue;
+        const p = await pack(blob);
+        if (!p) { st.att[e.id] = 'big'; persist(); continue; }
+        await F.setDoc(attDoc(e.id), { d: p.d, type: p.type, name: (e.att && e.att.name) || '' });
+        st.att[e.id] = 1; persist();
+      }
+      const live = new Set(S.entries.filter((e) => e.att).map((e) => String(e.id)));
+      for (const id of Object.keys(st.att)) if (!live.has(id)) { delete st.att[id]; persist(); if (uid) F.deleteDoc(attDoc(id)).catch(() => {}); }
+    } catch (er) {} finally { attBusy = false; }
+  }
+  async function pullAtt() {
+    if (pullBusy || !uid) return; pullBusy = true;
+    try {
+      for (const e of S.entries.slice()) {
+        if (!e.att || st.att[e.id] || !uid) continue;
+        let have = null; try { have = await idb.get(e.id); } catch (er) {}
+        if (have) continue;
+        const s = await F.getDoc(attDoc(e.id)); if (!s.exists()) continue;
+        const blob = await (await fetch(s.data().d)).blob();
+        await idb.set(e.id, blob); st.att[e.id] = 1; persist();
+      }
+    } catch (er) {} finally { pullBusy = false; }
+  }
+
+  let firstWait = null;
+  function listen(user) {
+    uid = user.uid; st.on = true; st.email = user.email || st.email; persist();
+    if (unsub) unsub();
+    let first = true;
+    unsub = F.onSnapshot(itemsCol(), (snap) => {
+      applyRemote(snap);
+      if (first) { first = false; if (firstWait) { firstWait(); firstWait = null; } }
+    }, () => setStatus('error'));
+    flush();
+  }
+  async function boot() {
+    if (!st.on) return;
+    try {
+      await load();
+      const off = F.onAuthStateChanged(F.auth, (user) => {
+        off();
+        if (user) listen(user); else { st.on = false; persist(); setStatus('off'); }
+      });
+    } catch (e) { setStatus('error'); }
+  }
+  document.addEventListener('visibilitychange', () => { if (document.hidden && uid) flush(); });
+  window.addEventListener('online', () => { if (uid) flush(); });
+
+  return {
+    isOn: () => st.on,
+    email: () => st.email,
+    status: () => status,
+    statusText: () => ({ ok: 'włączona ✓', pending: 'wysyłanie…', error: 'problem z połączeniem', off: 'wyłączona' }[status] || ''),
+    onStatus: (f) => { subs.add(f); return () => subs.delete(f); },
+    changed() { if (!uid) return; clearTimeout(timer); timer = setTimeout(flush, 700); },
+    forgetAtt() { st.att = {}; persist(); },
+    boot,
+    // logowanie: zwraca liczbę rzeczy zapisanych już w chmurze
+    async login(email, pass) {
+      await load();
+      const cred = await F.signInWithEmailAndPassword(F.auth, email, pass);
+      const all = await F.getDocs(F.collection(F.db, 'users', cred.user.uid, 'items'));
+      let n = 0; all.forEach((d) => { if (!d.data().del) n++; });
+      return { user: cred.user, remote: n };
+    },
+    // replace = zastąp dane z tego telefonu danymi z chmury
+    async adopt(user, replace) {
+      st.shadow = {}; st.att = {}; inflight = {};
+      if (replace) {
+        S.accounts = []; S.entries = []; S.fixed = [];
+        saveLocal(); try { await idb.clear(); } catch (e) {}
+      }
+      setStatus('pending');
+      const ready = new Promise((r) => { firstWait = r; setTimeout(r, 5000); });
+      listen(user);
+      await ready;
+    },
+    async logout() {
+      clearTimeout(timer);
+      if (unsub) { unsub(); unsub = null; }
+      uid = null; inflight = {};
+      st = { on: false, email: '', shadow: {}, att: {} }; persist();
+      setStatus('off');
+      try { if (F) await F.signOut(F.auth); } catch (e) {}
+    }
+  };
+})();
+
+// karta logowania; back() – powrót, done(hadData) – po udanym połączeniu
+function syncLoginCard(back, done) {
+  const card = swapModal(
+    '<div class="ct">synchronizacja</div>' +
+    '<div class="obsub" style="margin-top:-8px;line-height:1.45;text-wrap:balance">zaloguj się tym samym kontem na obu telefonach – dane będą się same uzupełniać</div>' +
+    '<input class="inp" id="lMail" type="email" inputmode="email" autocomplete="username" autocapitalize="off" placeholder="e-mail" aria-label="E-mail">' +
+    '<input class="inp" id="lPass" type="password" autocomplete="current-password" placeholder="hasło" aria-label="Hasło">' +
+    '<div class="warn" id="lErr" style="display:none"></div>' +
+    '<div class="btnrow"><button class="btn ghost" id="lBack" type="button">wróć</button><button class="btn in" id="lGo">zaloguj</button></div>'
+  );
+  const err = (t) => { const x = $('#lErr', card); x.textContent = t; x.style.display = t ? '' : 'none'; };
+  $('#lBack', card).addEventListener('click', back);
+  const go = $('#lGo', card);
+  go.addEventListener('click', async () => {
+    const mail = $('#lMail', card).value.trim(), pass = $('#lPass', card).value;
+    $('#lMail', card).classList.toggle('bad', !mail); $('#lPass', card).classList.toggle('bad', !pass);
+    if (!mail || !pass || go.disabled) return;
+    go.disabled = true; go.textContent = 'łączę…'; err('');
+    try {
+      const r = await sync.login(mail, pass);
+      const localHas = S.onboarded && (S.entries.length || S.accounts.length > 1 || S.fixed.length || (S.accounts[0] && S.accounts[0].opening));
+      if (r.remote && localHas) {
+        const c = swapModal(
+          '<div class="ct">w chmurze są już dane</div>' +
+          '<div class="warn">Dane na tym telefonie zostaną zastąpione danymi z chmury (z drugiego telefonu). Tego nie da się cofnąć.</div>' +
+          '<div class="btnrow"><button class="btn in" id="cYes">zastąp</button><button class="btn ghost" id="cNo">anuluj</button></div>'
+        );
+        $('#cNo', c).addEventListener('click', async () => { await sync.logout(); back(); });
+        $('#cYes', c).addEventListener('click', async () => { await sync.adopt(r.user, true); done(true); });
+        return;
+      }
+      await sync.adopt(r.user, !!r.remote);
+      done(!!r.remote || S.onboarded);
+    } catch (e) {
+      const code = (e && e.code) || '';
+      err(/invalid-credential|wrong-password|user-not-found|invalid-email/.test(code) ? 'zły e-mail lub hasło'
+        : /network|unavailable|load/.test(code) ? 'brak internetu – spróbuj ponownie'
+        : /too-many/.test(code) ? 'za dużo prób – spróbuj za chwilę'
+        : /permission/.test(code) ? 'baza w Firebase nie ma ustawionych reguł'
+        : 'nie udało się (' + (code || 'błąd') + ')');
+      if (/permission/.test(code)) sync.logout();
+      go.disabled = false; go.textContent = 'zaloguj';
+    }
   });
 }
 
@@ -986,6 +1266,7 @@ fontsReady.then(() => whenStable(() => {
   renderBalance('intro');
   if (!S.onboarded) openOnboarding();
 }));
+sync.boot();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));

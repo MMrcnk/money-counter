@@ -190,3 +190,5 @@ a{color:#bdbdbd}
 .nm .acct{display:block;font-size:11px;opacity:.6;margin-top:1px}
 
 .accbtn:hover,.gear:hover{color:#fff}
+
+.lnk{background:none;border:0;color:#cfcfcf;font:inherit;font-size:13px;text-decoration:underline;text-underline-offset:3px;padding:0;cursor:pointer}
