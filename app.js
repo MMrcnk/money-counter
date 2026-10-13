@@ -528,6 +528,7 @@ function renderHistory() {
     });
   });
   el.hist.innerHTML = html;
+  fitAmts(el.hist);
 }
 // listy łagodnie rozmywają się na krawędziach, ale tylko tam, gdzie coś jest schowane
 const FADE = 56;
@@ -558,6 +559,7 @@ function renderFixed() {
   html += '<button class="addf" data-act="add">dodaj nowy</button>';
   el.flist.innerHTML = html;
   el.fsum.textContent = fmt(sum) + ' zł';
+  fitAmts(el.flist);
 }
 el.flist.addEventListener('click', (e) => {
   const b = e.target.closest('[data-act]'); if (!b) return;
@@ -574,6 +576,14 @@ el.flist.addEventListener('click', (e) => {
   } else if (act === 'edit') openFixedEdit(id);
 });
 
+// długie kwoty zmniejszają czcionkę, żeby zmieściły się w kolumnie
+function fitAmts(root) {
+  root.querySelectorAll('.amt,.famt').forEach((x) => {
+    x.style.fontSize = '';
+    const room = x.clientWidth - 8, need = x.scrollWidth;
+    if (room > 0 && need > room) x.style.fontSize = Math.max(13, 21 * room / need).toFixed(1) + 'px';
+  });
+}
 function renderAccInfo() {
   const n = S.accounts.length;
   el.accInfo.textContent = ''; void n;
@@ -1286,6 +1296,13 @@ function syncLoginCard(back, done) {
   });
 }
 
+/* ---------- tylko pion: w poziomie zasłona z prośbą o obrócenie ---------- */
+(() => {
+  const r = document.createElement('div'); r.className = 'rot'; r.setAttribute('aria-live', 'polite');
+  r.innerHTML = '<svg width="54" height="54" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.4"/><path d="M11 5h2"/></svg><span>obróć telefon pionowo</span>';
+  document.body.appendChild(r);
+})();
+
 /* ---------- start ---------- */
 window.addEventListener('resize', layoutSoon);
 document.addEventListener('focusout', () => setTimeout(() => window.scrollTo(0, 0), 50));
@@ -1312,6 +1329,7 @@ function whenStable(cb) {
 const fontsReady = (document.fonts && document.fonts.ready) ? Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 800))]) : Promise.resolve();
 fontsReady.then(() => whenStable(() => {
   layout();
+  fitAmts(el.hist); fitAmts(el.flist);
   el.app.classList.remove('hidden');
   renderBalance('intro');
   if (!S.onboarded) openOnboarding();

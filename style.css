@@ -71,7 +71,7 @@ a{color:#bdbdbd}
 .uline{position:absolute;top:58px;left:0;width:30px;height:2px;border-radius:2px;background:#fff;transition:transform .58s var(--ease)}
 
 /* ---------- historia ---------- */
-.scroll{position:absolute;top:calc(var(--st) + 88px);bottom:0;left:0;right:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:0 18px calc(var(--nb) + 104px) 8px;scrollbar-width:none}
+.scroll{position:absolute;top:calc(var(--st) + 74px);bottom:0;left:0;right:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 18px calc(var(--nb) + 104px) 8px;scrollbar-width:none}
 .scroll::-webkit-scrollbar,.flist::-webkit-scrollbar{display:none}
 .month{display:flex;justify-content:space-between;align-items:baseline;padding:14px 4px 10px 52px;font-size:13px;color:#8a8a8a;letter-spacing:.03em}
 .month b{font-weight:500;color:#cfcfcf}
@@ -95,7 +95,7 @@ a{color:#bdbdbd}
 .empty{text-align:center;color:#6a6a6a;padding-top:80px;font-size:15px}
 
 /* ---------- koszty stałe ---------- */
-.flist{position:absolute;top:calc(var(--st) + 118px);left:0;right:0;bottom:calc(var(--nb) + 120px);overflow-y:auto;-webkit-overflow-scrolling:touch;padding:0 18px 24px;display:flex;flex-direction:column;gap:16px;scrollbar-width:none}
+.flist{position:absolute;top:calc(var(--st) + 74px);left:0;right:0;bottom:calc(var(--nb) + 120px);overflow-y:auto;-webkit-overflow-scrolling:touch;padding:44px 18px 24px;display:flex;flex-direction:column;gap:16px;scrollbar-width:none}
 .frow{display:flex;align-items:center;min-height:54px;border-radius:18px;background:#3a1010;border:1px solid #8a2626;padding:0 10px;transition:background .4s,border-color .4s;animation:rowIn .5s both}
 .frow.paid{background:#1f3a1f;border-color:#3f6b3f}
 .fbody{display:flex;align-items:center;flex:1;min-width:0;background:none;border:0;text-align:left;padding:0;min-height:54px;cursor:pointer}
@@ -214,3 +214,9 @@ a{color:#bdbdbd}
 .accrow .ai{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.06);color:#cfcfcf;margin-right:12px;flex:0 0 auto}
 .accrow .ai .ki{width:19px;height:19px}
 .accrow .an{flex:1;min-width:0}
+.rot{display:none}
+@media (orientation:landscape) and (max-height:560px){
+  .rot{display:flex;position:fixed;inset:0;z-index:100;background:#000;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:#9a9a9a;font-size:15px}
+  .rot svg{animation:rotHint 2.4s cubic-bezier(.32,.72,0,1) infinite}
+}
+@keyframes rotHint{0%,20%{transform:rotate(-90deg)}55%,100%{transform:rotate(0)}}
