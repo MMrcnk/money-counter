@@ -7,8 +7,7 @@
 
 const STORE_KEY = 'budzet-v1';
 const NOTE_IMGS = ['20.jpg', '50.jpg', '100.jpg', '200.jpg'];
-const ZL_PER_NOTE = 200;   // 1 banknot na każde 200 zł
-const MAX_NOTES = 60;
+const MAX_NOTES = 120;
 const MONTHS = ['styczeń','luty','marzec','kwiecień','maj','czerwiec','lipiec','sierpień','wrzesień','październik','listopad','grudzień'];
 const WD = ['nd','pon','wt','śr','czw','pt','sob'];
 
@@ -52,10 +51,41 @@ try {
 } catch (e) {}
 function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) {} }
 const newId = () => S.nextId++;
-function balance() {
-  let b = S.start;
-  for (const e of S.entries) b += e.type === 'in' ? e.amount : -e.amount;
+// konta: budżet = suma stanów wszystkich kont; stan konta = kwota przy założeniu + przychody − wydatki z tego konta
+function migrate() {
+  if (!Array.isArray(S.accounts)) {
+    S.accounts = [];
+    if (S.onboarded) {
+      const a = { id: newId(), name: 'główne konto', opening: round2(S.start || 0) };
+      S.accounts.push(a);
+      S.entries.forEach((e) => { if (e.acc == null) e.acc = a.id; });
+    }
+  }
+  if (S.lastAcc == null && S.accounts[0]) S.lastAcc = S.accounts[0].id;
+}
+migrate();
+function accBalance(id) {
+  const a = S.accounts.find((x) => x.id === id); if (!a) return 0;
+  let b = a.opening;
+  for (const e of S.entries) if (e.acc === id) b += e.type === 'in' ? e.amount : -e.amount;
   return round2(b);
+}
+function balance() {
+  let b = 0;
+  for (const a of S.accounts) b += accBalance(a.id);
+  return round2(b);
+}
+const accName = (id) => { const a = S.accounts.find((x) => x.id === id); return a ? a.name : ''; };
+function accChips(selected, type) {
+  return '<div class="clabel">' + (type === 'in' ? 'na które konto?' : 'z którego konta?') + '</div><div class="chips">' +
+    S.accounts.map((a) => '<button type="button" class="chip ' + type + (a.id === selected ? ' on' : '') + '" data-acc="' + a.id + '">' + CHIPCHK + esc(a.name) + '</button>').join('') + '</div>';
+}
+const CHIPCHK = '<svg class="ck" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 7.3l2.6 2.6L11 4.5"/></svg>';
+function mountChips(root, onPick) {
+  root.querySelectorAll('.chip').forEach((c) => c.addEventListener('click', () => {
+    root.querySelectorAll('.chip').forEach((x) => x.classList.toggle('on', x === c));
+    onPick(Number(c.dataset.acc));
+  }));
 }
 
 /* IndexedDB na załączniki */
@@ -91,8 +121,11 @@ const el = {
   addIn: $('#addIn'), addOut: $('#addOut'),
   flist: $('#flist'), fsum: $('#fsum'),
   bal: $('#bal'), balInner: $('#balInner'),
-  gear: $('#gear'), nav: $('#nav'), uline: $('#uline')
+  gear: $('#gear'), accBtn: $('#accBtn'), accInfo: $('#accInfo'), nav: $('#nav'), uline: $('#uline')
 };
+
+// napis „N konta” pod kwotą przesuwa się razem z ekranem Home
+el.track.children[1].appendChild(el.accInfo);
 
 /* ---------- układ zależny od ekranu ---------- */
 // bezpieczne marginesy ekranu (notch / pasek na dole) odczytane z CSS
@@ -116,6 +149,7 @@ function layout() {
   const h = L.fs * 1.08;
   L.homeY = Math.round((pillBottom + rndTop) / 2 - h / 2);
   L.topY = Math.round(sa.top + 22);
+  el.accInfo.style.top = Math.round(L.homeY + h + 16) + 'px';
   el.rain.style.setProperty('--fallH', (L.H + 140) + 'px');
   // zmiana rozmiaru ekranu (np. przy starcie aplikacji) nie może niczego animować
   el.app.classList.add('booting');
@@ -197,6 +231,7 @@ function placeAll() {
   const nw = el.nav.clientWidth;
   el.uline.style.transform = 'translateX(' + Math.round(nw / 6 - 15 + (nw / 3) * Math.max(0, Math.min(2, pos))) + 'px)';
   el.gear.classList.toggle('hide', !(ui.idx === 1 && !ui.dragging));
+  el.accBtn.classList.toggle('hide', !(ui.idx === 1 && !ui.dragging));
   placeBal();
 }
 function placeBal() {
@@ -361,22 +396,66 @@ el.pill.addEventListener('click', () => goTo(2));
 
 /* ---------- spadające banknoty ---------- */
 const notes = [];
+const retiring = [];
+let rainStarted = false;
+// banknot oznaczony do usunięcia znika dopiero, gdy skończy spadać (koniec jednego przelotu)
+function onNoteLoop(e) {
+  const n = e.currentTarget;
+  if (e.target !== n || !n.dataset.retire) return;
+  const i = retiring.indexOf(n); if (i >= 0) retiring.splice(i, 1);
+  n.remove();
+}
+// ile banknotów: mało przy małych kwotach, coraz więcej przy dużych
+// 0–749 zł → 2, 750 zł → 5, 1 500 zł → 8, … 10 000 zł → 41, 50 000 zł → 73, 100 000 zł → 101, ~150 000 zł+ → 120
+function notesFor(bal) {
+  if (bal <= 0) return 0;
+  // do 10 000 zł: co każde pełne 750 zł dochodzą od razu 3 banknoty (wyraźnie widać zmianę);
+  // powyżej przybywa ich dalej, aż do limitu
+  const steps = Math.floor(Math.min(bal, 10000) / 750);
+  let n = 2 + steps * 3;
+  if (bal > 10000) n += 0.0778 * (Math.pow(bal, 0.602) - Math.pow(10000, 0.602));
+  return Math.min(MAX_NOTES, Math.floor(n));
+}
+// jakie nominały: przy małym budżecie głównie 20 i 50 zł, przy dużym coraz więcej 100 i 200 zł
+function pickNote(bal) {
+  const t = Math.max(0, Math.min(1, Math.log10(Math.max(bal, 10)) / 5));
+  const w = [1.4 - t, 1, 0.4 + t, 1.6 * t * t + 0.1];
+  let x = Math.random() * w.reduce((a, b) => a + b, 0);
+  for (let k = 0; k < 4; k++) { x -= w[k]; if (x <= 0) return NOTE_IMGS[k]; }
+  return NOTE_IMGS[3];
+}
 function renderRain() {
   const bal = balance();
-  const want = bal <= 0 ? 0 : Math.min(MAX_NOTES, Math.max(1, Math.round(bal / ZL_PER_NOTE)));
-  while (notes.length > want) notes.pop().remove();
+  const want = notesFor(bal);
+  // nadmiarowe banknoty nie znikają nagle: dolatują do dołu ekranu i po prostu nie wracają na górę
+  let drop = notes.length - want;
+  while (drop-- > 0) {
+    const n = notes.pop();
+    n.dataset.retire = '1';
+    retiring.push(n);
+  }
+  // gdy budżet znów wzrośnie, najpierw „zatrzymujemy” banknoty, które właśnie miały odejść
+  while (notes.length < want && retiring.length) {
+    const n = retiring.pop(); delete n.dataset.retire; notes.push(n);
+  }
+  let added = 0;
   while (notes.length < want) {
     const r = Math.random, sgn = () => (r() < 0.5 ? -1 : 1);
     const sc = 1 + r() * 0.75, dur = 6 + r() * 8, r0 = Math.round(-45 + r() * 90);
+    // przy starcie banknoty są już rozsiane po ekranie; nowe (po przychodzie) spadają od góry, jeden po drugim
+    const delay = rainStarted ? (added * 0.18 + r() * 0.25) : -r() * dur;
+    added++;
     const n = document.createElement('span');
     n.className = 'note';
-    n.style.cssText = 'left:' + Math.round(r() * 80) + '%;animation-duration:' + dur.toFixed(2) + 's;animation-delay:' + (-r() * dur).toFixed(2) + 's;--drift:' + Math.round(-70 + r() * 140) + 'px';
+    n.style.cssText = 'left:' + Math.round(r() * 80) + '%;animation-duration:' + dur.toFixed(2) + 's;animation-delay:' + delay.toFixed(2) + 's;--drift:' + Math.round(-70 + r() * 140) + 'px';
     const swayDur = 1.4 + r() * 3.2;
     n.innerHTML = '<span class="ni" style="animation-duration:' + swayDur.toFixed(2) + 's;animation-delay:' + (-r() * 4).toFixed(2) + 's;--sx:' + Math.round(6 + r() * 26) + 'px;--r0:' + r0 + 'deg;--r1:' + (r0 + sgn() * Math.round(20 + r() * 45)) + 'deg;--ry:' + (sgn() * Math.round(60 + r() * 240)) + 'deg;--rx0:' + Math.round(-40 + r() * 80) + 'deg;--rx1:' + Math.round(-40 + r() * 80) + 'deg">' +
-      '<img src="' + NOTE_IMGS[Math.floor(r() * 4)] + '" alt="" width="' + Math.round(56 * sc) + '" height="' + Math.round(28 * sc) + '"></span>';
+      '<img src="' + pickNote(bal) + '" alt="" width="' + Math.round(56 * sc) + '" height="' + Math.round(28 * sc) + '"></span>';
+    n.addEventListener('animationiteration', onNoteLoop);
     el.rain.appendChild(n);
     notes.push(n);
   }
+  if (want > 0 || notes.length) rainStarted = true;
 }
 
 /* ---------- pigułka statusu ---------- */
@@ -422,7 +501,7 @@ function renderHistory() {
         html += '<button class="row ' + (isIn ? 'in' : 'out') + '" data-id="' + e.id + '" style="animation-delay:' + Math.min(n++, 12) * 40 + 'ms">' +
           '<span class="ico">' + (isIn ? ICO_IN : ICO_OUT) + '</span>' +
           '<span class="amt">' + (isIn ? '' : '-') + fmt(e.amount) + ' zł</span><span class="sep"></span>' +
-          '<span class="nm">' + esc(e.name) + '</span></button>';
+          '<span class="nm">' + esc(e.name) + (S.accounts.length > 1 && e.acc != null ? '<small class="acct">' + esc(accName(e.acc)) + '</small>' : '') + '</span></button>';
       });
       html += '</div></div>';
     });
@@ -462,13 +541,17 @@ el.flist.addEventListener('click', (e) => {
   } else if (act === 'edit') openFixedEdit(id);
 });
 
-function renderAll() { renderPill(); renderHistory(); renderFixed(); renderRain(); renderBalance(); }
+function renderAccInfo() {
+  const n = S.accounts.length;
+  el.accInfo.textContent = ''; void n;
+}
+function renderAll() { renderPill(); renderHistory(); renderFixed(); renderRain(); renderBalance(); renderAccInfo(); }
 
 /* ---------- okna (karty) ---------- */
 let modal = null;
 function openModal(html, opts = {}) {
-  const ov = document.createElement('div'); ov.className = 'ov';
-  const card = document.createElement('div'); card.className = 'card';
+  const ov = document.createElement('div'); ov.className = 'ov' + (opts.pop ? ' pop' : '');
+  const card = document.createElement('div'); card.className = 'card' + (opts.pop ? ' popc' : '');
   card.innerHTML = '<div class="swap">' + html + '</div>';
   ov.appendChild(card); document.body.appendChild(ov);
   if (!opts.locked) ov.addEventListener('click', (e) => { if (e.target === ov) closeModal(opts.onClose); });
@@ -557,14 +640,17 @@ function playSound(f) {
 /* --- dodawanie przychodu / wydatku --- */
 function openAdd(type) {
   const isIn = type === 'in';
+  let acc = S.accounts.some((a) => a.id === S.lastAcc) ? S.lastAcc : (S.accounts[0] && S.accounts[0].id);
   const card = openModal(
     '<div class="ct">' + (isIn ? 'nazwij przychód i podaj kwotę' : 'nazwij wydatek i podaj kwotę') + '</div>' +
     '<input class="inp" id="fName" type="text" placeholder="nazwa" aria-label="Nazwa" autocomplete="off">' +
     '<div class="amtrow"><input class="inp" id="fAmt" type="text" inputmode="decimal" placeholder="kwota" aria-label="Kwota" autocomplete="off"><span class="zl">zł</span></div>' +
+    accChips(acc, type) +
     (isIn ? '' : '<label class="attach" id="fAtt">' + CLIP + '<span id="fAttLbl">załącz potwierdzenie przelewu</span><input type="file" accept="image/*,application/pdf"></label>') +
     '<input class="date" id="fDate" type="date" value="' + todayIso() + '" aria-label="Data">' +
     '<button class="btn ' + (isIn ? 'in' : 'out') + '" id="fGo">dodaj</button>'
   );
+  mountChips(card, (id) => { acc = id; });
   let file = null;
   const att = $('#fAtt', card);
   if (att) $('input', att).addEventListener('change', (e) => {
@@ -577,7 +663,8 @@ function openAdd(type) {
     $('#fName', card).classList.toggle('bad', !name);
     $('#fAmt', card).classList.toggle('bad', !(a > 0));
     if (!name || !(a > 0)) return;
-    const e = { id: newId(), type, name, amount: round2(a), date: $('#fDate', card).value || todayIso() };
+    const e = { id: newId(), type, name, amount: round2(a), date: $('#fDate', card).value || todayIso(), acc };
+    S.lastAcc = acc;
     if (file) {
       e.att = { name: file.name, type: file.type };
       try { await idb.set(e.id, file); } catch (err) { delete e.att; }
@@ -601,6 +688,7 @@ function openEntry(id) {
       '<div class="ct">' + (e.type === 'in' ? 'karta przychodu' : 'karta wydatku') + '</div>' +
       '<input class="inp" id="eName" type="text" aria-label="Nazwa" value="' + esc(e.name) + '" autocomplete="off">' +
       '<div class="amtrow"><input class="inp" id="eAmt" type="text" inputmode="decimal" aria-label="Kwota" value="' + numStr(e.amount) + '" autocomplete="off"><span class="zl">zł</span></div>' +
+      accChips(e.acc, e.type) +
       (e.att ? '<button class="attach has" id="eView">' + CLIP + '<span>zobacz potwierdzenie przelewu</span></button>' : '') +
       '<input class="date" id="eDate" type="date" aria-label="Data" value="' + e.date + '">' +
       '<button class="btn out" id="eDel">' + (e.type === 'in' ? 'usuń przychód' : 'usuń wydatek') + '</button>'
@@ -608,6 +696,7 @@ function openEntry(id) {
     $('#eName', card).addEventListener('input', (ev) => { e.name = ev.target.value; changed = true; save(); });
     $('#eAmt', card).addEventListener('input', (ev) => { const a = num(ev.target.value); if (a > 0) { e.amount = round2(a); changed = true; save(); } });
     $('#eDate', card).addEventListener('change', (ev) => { if (ev.target.value) { e.date = ev.target.value; changed = true; save(); } });
+    mountChips(card, (id) => { e.acc = id; changed = true; save(); });
     if (e.att) $('#eView', card).addEventListener('click', view);
     $('#eDel', card).addEventListener('click', confirmDel);
   };
@@ -698,7 +787,7 @@ function openSettings() {
   const main = () => {
     const card = swapModal(
       '<div class="ct">ustawienia</div>' +
-      '<div class="sline"><span>budżet startowy</span><b>' + fmt(S.start) + ' zł</b></div>' +
+      '<div class="sline"><span>konta</span><b>' + S.accounts.length + '</b></div>' +
       '<div class="sline"><span>wpisy w historii</span><b>' + S.entries.length + '</b></div>' +
       '<div class="btnrow" style="margin-top:6px"><button class="btn ghost sm" id="sExp">' + ICO_EXP + 'eksportuj</button><button class="btn ghost sm" id="sImp" type="button">' + ICO_IMP + 'importuj</button></div>' +
       '<input type="file" id="sImpFile" accept="application/json,.json" style="display:none">' +
@@ -712,12 +801,12 @@ function openSettings() {
   const confirmReset = () => {
     const card = swapModal(
       '<div class="ct">na pewno?</div>' +
-      '<div class="warn">Usunie to całą historię przychodów i wydatków, a budżet wróci do 0 zł. Koszty stałe zostaną. Tego nie da się cofnąć.</div>' +
+      '<div class="warn">Usunie to całą historię przychodów i wydatków, a stan wszystkich kont wróci do 0 zł. Konta i koszty stałe zostaną. Tego nie da się cofnąć.</div>' +
       '<div class="btnrow"><button class="btn out" id="rYes">resetuj</button><button class="btn ghost" id="rNo">anuluj</button></div>'
     );
     $('#rNo', card).addEventListener('click', main);
     $('#rYes', card).addEventListener('click', () => {
-      S.entries = []; S.start = 0; save();
+      S.entries = []; S.start = 0; S.accounts.forEach((a) => { a.opening = 0; }); save();
       idb.clear().catch(() => {});
       closeModal(() => { goTo(1); renderPill(); renderHistory(); renderFixed(); renderRain(); renderBalance('intro'); });
     });
@@ -739,7 +828,7 @@ function openSettings() {
           await idb.set(Number(k), blob);
         }
         S = Object.assign({ onboarded: true, start: 0, entries: [], fixed: [], nextId: 1 }, data.state);
-        save();
+        migrate(); save();
         closeModal(() => { renderAll(); renderBalance('intro'); });
       } catch (err) {
         const c = swapModal('<div class="ct">nie udało się</div><div class="warn">To nie jest plik kopii z tej aplikacji.</div><button class="btn ghost" id="iOk">wróć</button>');
@@ -770,12 +859,85 @@ async function exportData() {
 }
 el.gear.addEventListener('click', openSettings);
 
+/* --- konta --- */
+function openAccounts() {
+  const rows = S.accounts.map((a) => '<button class="accrow" data-id="' + a.id + '"><span class="an">' + esc(a.name) + '</span><span class="ab">' + fmt(accBalance(a.id)) + ' zł</span></button>').join('');
+  const card = openModal(
+    '<div class="ct">twoje konta</div>' +
+    '<div class="acclist">' + (rows || '<div class="warn">brak kont</div>') + '</div>' +
+    '<div class="sline" style="padding:2px 6px 0"><span>razem</span><b style="font-weight:500">' + fmt(balance()) + ' zł</b></div>' +
+    '<button class="btn in" id="aAdd" style="margin-top:4px">+ dodaj konto</button>'
+  );
+  card.querySelectorAll('.accrow').forEach((r) => r.addEventListener('click', () => closeModal(() => openAccountEdit(Number(r.dataset.id)))));
+  $('#aAdd', card).addEventListener('click', () => closeModal(openAccountAdd));
+}
+el.accBtn.addEventListener('click', openAccounts);
+
+function openAccountAdd() {
+  const card = openModal(
+    '<div class="ct">nowe konto</div>' +
+    '<input class="inp" id="nName" type="text" placeholder="nazwa konta, np. mBank" aria-label="Nazwa konta" autocomplete="off">' +
+    '<div class="amtrow"><input class="inp" id="nAmt" type="text" inputmode="decimal" placeholder="ile masz na koncie" aria-label="Stan konta" autocomplete="off"><span class="zl">zł</span></div>' +
+    '<div class="warn" style="color:#8a8a8a;font-size:13px">To stan konta – doliczy się do budżetu, ale nie trafi do historii jako przychód.</div>' +
+    '<button class="btn in" id="nGo">dodaj konto</button>'
+  );
+  $('#nGo', card).addEventListener('click', () => {
+    const name = $('#nName', card).value.trim(), v = num($('#nAmt', card).value || '0');
+    $('#nName', card).classList.toggle('bad', !name);
+    $('#nAmt', card).classList.toggle('bad', isNaN(v));
+    if (!name || isNaN(v)) return;
+    S.accounts.push({ id: newId(), name, opening: round2(v) }); save();
+    closeModal(() => {});
+    renderAll();
+  });
+}
+
+function openAccountEdit(id) {
+  const a = S.accounts.find((x) => x.id === id); if (!a) return;
+  openModal('', { onClose: () => renderAll() });
+  const used = () => S.entries.some((e) => e.acc === a.id);
+  const main = () => {
+    const card = swapModal(
+      '<div class="ct">konto</div>' +
+      '<input class="inp" id="kName" type="text" aria-label="Nazwa konta" value="' + esc(a.name) + '" autocomplete="off">' +
+      '<div class="sline" style="padding:4px 6px"><span>stan konta</span><b style="font-size:18px">' + fmt(accBalance(a.id)) + ' zł</b></div>' +
+      '<div class="sline" style="padding:0 6px"><span>wpisy z tym kontem</span><b>' + S.entries.filter((e) => e.acc === a.id).length + '</b></div>' +
+      '<button class="btn out" id="kDel" style="margin-top:8px">usuń konto</button>'
+    );
+    $('#kName', card).addEventListener('input', (ev) => { a.name = ev.target.value; save(); });
+    $('#kDel', card).addEventListener('click', confirmDel);
+  };
+  const confirmDel = () => {
+    if (S.accounts.length <= 1) {
+      const c = swapModal('<div class="ct">nie można usunąć</div><div class="warn">To jedyne konto – musi zostać przynajmniej jedno.</div><button class="btn ghost" id="kBack">wróć</button>');
+      $('#kBack', c).addEventListener('click', main); return;
+    }
+    if (used()) {
+      const c = swapModal('<div class="ct">nie można usunąć</div><div class="warn">Do tego konta są przypisane wpisy w historii. Najpierw zmień w nich konto albo je usuń.</div><button class="btn ghost" id="kBack">wróć</button>');
+      $('#kBack', c).addEventListener('click', main); return;
+    }
+    const c = swapModal(
+      '<div class="ct big">usunąć konto?</div>' +
+      '<div class="warn">' + esc(a.name) + ' · ' + fmt(accBalance(a.id)) + ' zł</div>' +
+      '<div class="btnrow" style="margin-top:6px"><button class="btn out" id="dYes">tak</button><button class="btn ghost" id="dNo">nie</button></div>'
+    );
+    $('#dNo', c).addEventListener('click', main);
+    $('#dYes', c).addEventListener('click', () => closeModal(() => {
+      S.accounts = S.accounts.filter((x) => x.id !== a.id);
+      if (S.lastAcc === a.id) S.lastAcc = S.accounts[0] && S.accounts[0].id;
+      save(); renderAll();
+    }));
+  };
+  main();
+}
+
 /* --- pierwsze uruchomienie: budżet startowy --- */
 function openOnboarding() {
   const card = openModal(
-    '<div class="ct">dodaj budżet startowy</div>' +
-    '<div class="obsub">ile masz teraz do dyspozycji?</div>' +
-    '<div class="amtrow"><input class="inp" id="oAmt" type="text" inputmode="decimal" placeholder="np. 2500" aria-label="Budżet startowy" autocomplete="off"><span class="zl">zł</span></div>' +
+    '<div class="ct">dodaj pierwsze konto</div>' +
+    '<div class="obsub">kolejne dodasz pod ikoną karty</div>' +
+    '<input class="inp" id="oName" type="text" placeholder="nazwa konta, np. mBank" aria-label="Nazwa konta" autocomplete="off">' +
+    '<div class="amtrow"><input class="inp" id="oAmt" type="text" inputmode="decimal" placeholder="ile masz na koncie" aria-label="Stan konta" autocomplete="off"><span class="zl">zł</span></div>' +
     '<button class="btn in" id="oGo" style="margin-top:6px">zaczynamy</button>',
     { locked: true }
   );
@@ -783,7 +945,11 @@ function openOnboarding() {
     const v = num($('#oAmt', card).value);
     $('#oAmt', card).classList.toggle('bad', isNaN(v));
     if (isNaN(v)) return;
-    S.start = round2(v); S.onboarded = true; save();
+    const nm = $('#oName', card).value.trim() || 'główne konto';
+    const a = { id: newId(), name: nm, opening: round2(v) };
+    S.accounts.push(a); S.lastAcc = a.id;
+    S.start = 0; S.onboarded = true; save();
+    renderAccInfo();
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     closeModal(() => {});
     renderRain(); renderBalance('intro');
@@ -797,7 +963,7 @@ window.addEventListener('orientationchange', layoutSoon);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { renderPill(); renderFixed(); } });
 
 el.app.classList.add('booting');
-renderPill(); renderHistory(); renderFixed(); renderRain();
+renderPill(); renderHistory(); renderFixed(); renderRain(); renderAccInfo();
 layout();
 
 // iOS przy starcie przez chwilę podaje złe wymiary ekranu – czekamy, aż się ustabilizują,
